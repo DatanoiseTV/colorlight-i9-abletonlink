@@ -203,21 +203,30 @@ def build_reserved_map(connectors, io_records):
 # SVG renderer (light theme, board-centric layout)
 # ---------------------------------------------------------------------------
 
-CANVAS_W = 1500
-CANVAS_H = 1180
+CANVAS_W = 1620
+CANVAS_H = 1320
 
 # Board outline (centred, room for outside pin strips)
-BOARD_X  = 290
-BOARD_Y  = 240
-BOARD_W  = 920
+BOARD_X  = 320
+BOARD_Y  = 280
+BOARD_W  = 980
 BOARD_H  = 660
 
-# Pin cell sizes
-H_CELL_W = 56
-H_CELL_H = 26
-V_CELL_W = 130
+# Pin cell sizes — H_CELL_W is tuned so that two 8-pin strips fit
+# inside the board width with healthy gaps and an HDMI marker between
+# them.
+H_CELL_W = 48
+H_CELL_H = 30
+V_CELL_W = 124
 V_CELL_H = 26
 GAP      = 4
+
+# Vertical spacing inside a connector strip card.
+TITLE_TO_SUBTITLE   = 16
+SUBTITLE_TO_LABEL   = 18
+LABEL_TO_FIRST_CELL = 4
+ROW_BETWEEN_LABELS  = 18
+COL_LABEL_GAP       = 10
 
 PALETTE = {
     "bg":             "#fbfcfe",
@@ -380,19 +389,33 @@ def vert_pin_cell(x, y, fpga, label, css):
 
 
 def render_horizontal_strip(pmods, fmap, reserved_map, x0, y0, title, subtitle):
-    """Render a horizontal connector strip with two PMOD rows of 8 cells each.
+    """Render a horizontal connector strip with two PMOD rows of 8 cells.
 
-    pmods: [(pmod_name, [pin0..pin7]), (pmod_name, [pin0..pin7])]
+    Layout (top of strip = y0):
+
+        title          ← y0 + 12
+        subtitle       ← y0 + 28
+        pmod_a label   ← y0 + 50
+        row 0 cells    ← y0 + 54  (height 26)
+        pmod_b label   ← y0 + 102
+        row 1 cells    ← y0 + 106
+        last cell ends ← y0 + 132
+
+    Total card height ≈ 132 px.
     """
     out = []
+    title_y    = y0 + 12
+    subtitle_y = title_y + TITLE_TO_SUBTITLE
     out.append(
-        f'  <text class="conn-title" x="{x0}" y="{y0 - 18}">{title}</text>\n'
-        f'  <text class="conn-sub"   x="{x0}" y="{y0 - 4}">{subtitle}</text>\n'
+        f'  <text class="conn-title" x="{x0}" y="{title_y}">{title}</text>\n'
+        f'  <text class="conn-sub"   x="{x0}" y="{subtitle_y}">{subtitle}</text>\n'
     )
+    first_label_y = subtitle_y + SUBTITLE_TO_LABEL
     for row, (pmod_name, pins) in enumerate(pmods):
-        ry = y0 + row * (H_CELL_H + GAP + 12)
+        label_y = first_label_y + row * (H_CELL_H + LABEL_TO_FIRST_CELL + ROW_BETWEEN_LABELS)
+        ry      = label_y + LABEL_TO_FIRST_CELL
         out.append(
-            f'  <text class="conn-sub" x="{x0}" y="{ry - 2}">{pmod_name}</text>\n'
+            f'  <text class="conn-sub" x="{x0}" y="{label_y}">{pmod_name}</text>\n'
         )
         for col, fpga in enumerate(pins):
             cx = x0 + col * (H_CELL_W + GAP)
@@ -405,22 +428,33 @@ def render_horizontal_strip(pmods, fmap, reserved_map, x0, y0, title, subtitle):
 
 
 def render_vertical_strip(pmods, fmap, reserved_map, x0, y0, title, subtitle):
-    """Render a vertical connector strip with two PMOD columns of 8 cells each.
+    """Render a vertical connector strip with two PMOD columns of 8 cells.
 
-    pmods: [(pmod_name, [pin0..pin7]), (pmod_name, [pin0..pin7])]
+    Layout (top of card = y0):
+
+        title          ← y0 + 12
+        subtitle       ← y0 + 28
+        col labels     ← y0 + 50
+        cells          ← y0 + 54 .. y0 + 54 + 8 * (V_CELL_H + GAP) - GAP
+
+    Total card height ≈ 290 px.
     """
     out = []
+    title_y    = y0 + 12
+    subtitle_y = title_y + TITLE_TO_SUBTITLE
     out.append(
-        f'  <text class="conn-title" x="{x0}" y="{y0 - 18}">{title}</text>\n'
-        f'  <text class="conn-sub"   x="{x0}" y="{y0 - 4}">{subtitle}</text>\n'
+        f'  <text class="conn-title" x="{x0}" y="{title_y}">{title}</text>\n'
+        f'  <text class="conn-sub"   x="{x0}" y="{subtitle_y}">{subtitle}</text>\n'
     )
+    label_y     = subtitle_y + SUBTITLE_TO_LABEL
+    first_cell_y = label_y + LABEL_TO_FIRST_CELL
     for col, (pmod_name, pins) in enumerate(pmods):
-        cx = x0 + col * (V_CELL_W + GAP * 2)
+        cx = x0 + col * (V_CELL_W + COL_LABEL_GAP)
         out.append(
-            f'  <text class="conn-sub" x="{cx}" y="{y0 + 12}">{pmod_name}</text>\n'
+            f'  <text class="conn-sub" x="{cx}" y="{label_y}">{pmod_name}</text>\n'
         )
         for row, fpga in enumerate(pins):
-            ry = y0 + 18 + row * (V_CELL_H + GAP)
+            ry = first_cell_y + row * (V_CELL_H + GAP)
             if fpga == "-":
                 label, css = "—", "free"
             else:
@@ -474,38 +508,46 @@ def render_svg(num_physical_tdm_ports=2):
     )
 
     # ---- header markers (visual hint of the actual PCB headers) --
-    # P3 + P2 along the top edge, with HDMI in the middle
-    p3_x = BOARD_X + 40
-    p2_x = BOARD_X + BOARD_W - 40 - 380
-    hdmi_x = BOARD_X + (BOARD_W - 80) / 2
-    out.append(render_header_marker(p3_x, BOARD_Y + 16, 380, 22))
+    # Strip width matches the marker width below so the cells line up
+    # vertically with the silkscreen.
+    strip_w = 8 * H_CELL_W + 7 * GAP                  # = 8*48 + 7*4 = 412
+    side_margin = 30
+    hdmi_w = max(60, BOARD_W - 2 * (side_margin + strip_w) - 4)
+    hdmi_w = 60                                       # fixed for the HDMI marker
+    inner_gap = (BOARD_W - 2 * side_margin - 2 * strip_w - hdmi_w) / 2
+
+    p3_x = BOARD_X + side_margin
+    hdmi_x = p3_x + strip_w + inner_gap
+    p2_x = hdmi_x + hdmi_w + inner_gap
+
+    out.append(render_header_marker(p3_x, BOARD_Y + 16, strip_w, 22))
     out.append(
-        f'  <text class="conn-sub" x="{p3_x + 190}" y="{BOARD_Y + 32}" '
+        f'  <text class="conn-sub" x="{p3_x + strip_w/2}" y="{BOARD_Y + 32}" '
         f'text-anchor="middle">P3 header</text>\n'
     )
-    out.append(render_header_marker(hdmi_x, BOARD_Y + 16, 80, 22))
+    out.append(render_header_marker(hdmi_x, BOARD_Y + 16, hdmi_w, 22))
     out.append(
-        f'  <text class="chip-accent" x="{hdmi_x + 40}" y="{BOARD_Y + 32}" '
+        f'  <text class="chip-accent" x="{hdmi_x + hdmi_w/2}" y="{BOARD_Y + 32}" '
         f'text-anchor="middle">HDMI</text>\n'
     )
-    out.append(render_header_marker(p2_x, BOARD_Y + 16, 380, 22))
+    out.append(render_header_marker(p2_x, BOARD_Y + 16, strip_w, 22))
     out.append(
-        f'  <text class="conn-sub" x="{p2_x + 190}" y="{BOARD_Y + 32}" '
+        f'  <text class="conn-sub" x="{p2_x + strip_w/2}" y="{BOARD_Y + 32}" '
         f'text-anchor="middle">P2 header</text>\n'
     )
 
     # P5 + P6 along the bottom edge
-    p5_x = BOARD_X + 40
-    p6_x = BOARD_X + BOARD_W - 40 - 380
+    p5_x = p3_x
+    p6_x = p2_x
     bot_y = BOARD_Y + BOARD_H - 38
-    out.append(render_header_marker(p5_x, bot_y, 380, 22))
+    out.append(render_header_marker(p5_x, bot_y, strip_w, 22))
     out.append(
-        f'  <text class="conn-sub" x="{p5_x + 190}" y="{bot_y + 16}" '
+        f'  <text class="conn-sub" x="{p5_x + strip_w/2}" y="{bot_y + 16}" '
         f'text-anchor="middle">P5 header</text>\n'
     )
-    out.append(render_header_marker(p6_x, bot_y, 380, 22))
+    out.append(render_header_marker(p6_x, bot_y, strip_w, 22))
     out.append(
-        f'  <text class="conn-sub" x="{p6_x + 190}" y="{bot_y + 16}" '
+        f'  <text class="conn-sub" x="{p6_x + strip_w/2}" y="{bot_y + 16}" '
         f'text-anchor="middle">P6 header</text>\n'
     )
 
@@ -576,38 +618,38 @@ def render_svg(num_physical_tdm_ports=2):
         out.append(render_chip(cx, util_y, util_cell_w, util_cell_h, lab, sub))
 
     # ---- TOP horizontal connector strips (P3, P2) -----------------
-    # Position the strips above the board so they visually attach to
-    # the P3 / P2 header markers.
-    top_strip_y = 100
+    # Strips sit just above the board so the cells line up with the
+    # silkscreen header markers.
+    top_strip_y = BOARD_Y - 152
     out.append(render_horizontal_strip(
         [("pmode", connectors["pmode"]),
          ("pmodf", connectors["pmodf"])],
         fmap, reserved_map,
-        x0=p3_x - 13, y0=top_strip_y,
+        x0=p3_x, y0=top_strip_y,
         title="P3", subtitle="pmode → TDM port 0   ·   pmodf → TDM port 1"
     ))
     out.append(render_horizontal_strip(
         [("pmodc", connectors["pmodc"]),
          ("pmodd", connectors["pmodd"])],
         fmap, reserved_map,
-        x0=p2_x - 13, y0=top_strip_y,
+        x0=p2_x, y0=top_strip_y,
         title="P2", subtitle="pmodc → MIDI + Eurorack   ·   pmodd → free"
     ))
 
     # ---- BOTTOM horizontal connector strips (P5, P6) -------------
-    bot_strip_y = BOARD_Y + BOARD_H + 60
+    bot_strip_y = BOARD_Y + BOARD_H + 30
     out.append(render_horizontal_strip(
         [("pmodi", connectors["pmodi"]),
          ("pmodj", connectors["pmodj"])],
         fmap, reserved_map,
-        x0=p5_x - 13, y0=bot_strip_y,
+        x0=p5_x, y0=bot_strip_y,
         title="P5", subtitle="pmodi → free   ·   pmodj → free  (J17/H18 = UART)"
     ))
     out.append(render_horizontal_strip(
         [("pmodk", connectors["pmodk"]),
          ("pmodl", connectors["pmodl"])],
         fmap, reserved_map,
-        x0=p6_x - 13, y0=bot_strip_y,
+        x0=p6_x, y0=bot_strip_y,
         title="P6", subtitle="pmodk → free   ·   pmodl → free"
     ))
 
@@ -616,8 +658,8 @@ def render_svg(num_physical_tdm_ports=2):
         [("pmodg", connectors["pmodg"]),
          ("pmodh", connectors["pmodh"])],
         fmap, reserved_map,
-        x0=18, y0=BOARD_Y + 60,
-        title="P4", subtitle="pmodg → free   ·   pmodh → beat / transport"
+        x0=18, y0=BOARD_Y + 28,
+        title="P4", subtitle="pmodg = free  ·  pmodh = beat/transport"
     ))
 
     # ---- RIGHT vertical connector strip (P1) ---------------------
@@ -645,30 +687,30 @@ def render_svg(num_physical_tdm_ports=2):
             ("P2",  "RX_DV", "free"),
         ]),
     ]
-    eth_x0 = CANVAS_W - 18 - (V_CELL_W * 2 + GAP * 2)
-    eth_y0 = BOARD_Y + 60
+    eth_x0 = CANVAS_W - 18 - (V_CELL_W * 2 + COL_LABEL_GAP)
+    eth_y0 = BOARD_Y + 28
+    eth_title_y    = eth_y0 + 12
+    eth_subtitle_y = eth_title_y + TITLE_TO_SUBTITLE
+    eth_label_y    = eth_subtitle_y + SUBTITLE_TO_LABEL
+    eth_first_cell = eth_label_y + LABEL_TO_FIRST_CELL
     out.append(
-        f'  <text class="conn-title" x="{eth_x0}" y="{eth_y0 - 18}">P1</text>\n'
-        f'  <text class="conn-sub"   x="{eth_x0}" y="{eth_y0 - 4}">'
-        f'dual GbE PHY (ETH PHY 0 driven by LiteEth, ETH PHY 1 idle)</text>\n'
+        f'  <text class="conn-title" x="{eth_x0}" y="{eth_title_y}">P1</text>\n'
+        f'  <text class="conn-sub"   x="{eth_x0}" y="{eth_subtitle_y}">'
+        f'dual GbE  ·  PHY0 used by LiteEth  ·  PHY1 idle</text>\n'
     )
     for col, (label, pins) in enumerate(eth_pmods):
-        cx = eth_x0 + col * (V_CELL_W + GAP * 2)
+        cx = eth_x0 + col * (V_CELL_W + COL_LABEL_GAP)
         out.append(
-            f'  <text class="conn-sub" x="{cx}" y="{eth_y0 + 12}">{label}</text>\n'
+            f'  <text class="conn-sub" x="{cx}" y="{eth_label_y}">{label}</text>\n'
         )
         for row, (fpga, fn, css) in enumerate(pins):
-            ry = eth_y0 + 18 + row * (V_CELL_H + GAP)
-            # ETH PHY 0 is "used" by LiteEth — show in pulse colour to
-            # mark it as wired-in.
-            if label == "PHY0":
-                use_css = "tdm1"   # tan, gentle highlight
-            else:
-                use_css = "free"
+            ry = eth_first_cell + row * (V_CELL_H + GAP)
+            # ETH PHY 0 is "used" by LiteEth — gentle highlight.
+            use_css = "tdm1" if label == "PHY0" else "free"
             out.append(vert_pin_cell(cx, ry, fpga, fn, use_css))
 
     # ---- legend --------------------------------------------------
-    legend_y = CANVAS_H - 76
+    legend_y = CANVAS_H - 90
     cell_w = 134
     legend_total_w = len(LEGEND) * cell_w + (len(LEGEND) - 1) * GAP
     legend_x0 = (CANVAS_W - legend_total_w) / 2
