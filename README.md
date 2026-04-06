@@ -1,23 +1,96 @@
 # LinkFPGA
 
-**Ableton Link in hardware** — a self-contained LiteX/Migen SoC for the
-[Colorlight i9 v7.2](https://github.com/wuxx/Colorlight-FPGA-Projects/blob/master/colorlight_i9_v7.2.md)
-that joins Ableton Link sessions on a local network, drives
-multi-channel TDM audio I/O, and emits sample-accurate beat-clock,
-MIDI clock, and transport pulses on dedicated GPIO pins. Also speaks
-**MIDI clock + start/stop** at 31250 baud and accepts **Eurorack-level
-clock / reset / run inputs**, both with hardware timestamping for
-sub-microsecond sync precision. No host PC, no DAW, no audio driver —
-gigabit Ethernet in, audio + clock + MIDI out.
+> **Ableton Link, MIDI, Eurorack and multi-channel TDM audio — in a single FPGA box.**
 
-> **Repo:** `git@github.com:DatanoiseTV/colorlight-i9-abletonlink.git`
-> **Spec:** [`LINK_PROTOCOL_SPEC.md`](./LINK_PROTOCOL_SPEC.md) — the
-> wire-format spec, derived from the reference Ableton/link C++
-> implementation, that this firmware follows byte-for-byte.
+A self-contained Lattice ECP5 SoC for the
+[Colorlight i9 v7.2](https://github.com/wuxx/Colorlight-FPGA-Projects/blob/master/colorlight_i9_v7.2.md)
+that joins Ableton Link sessions over gigabit Ethernet, drives
+multi-channel TDM audio I/O, emits sample-accurate beat clocks and
+transport pulses on GPIO, talks MIDI over a hardware-driven UART with
+zero-jitter clock injection, and listens to Eurorack-level clock /
+reset / run inputs — all sharing the same hardware microsecond
+timebase. No host PC, no DAW, no audio driver. Plug it into your
+network switch and watch the lights come on.
+
+[![spec](https://img.shields.io/badge/spec-LINK__PROTOCOL__SPEC.md-7fd1ff)](./LINK_PROTOCOL_SPEC.md)
+[![board](https://img.shields.io/badge/board-Colorlight%20i9%20v7.2-ffae57)](https://github.com/wuxx/Colorlight-FPGA-Projects/blob/master/colorlight_i9_v7.2.md)
+[![toolchain](https://img.shields.io/badge/toolchain-OSS%20CAD%20Suite-5fdc7e)](https://github.com/YosysHQ/oss-cad-suite-build)
+[![cpu](https://img.shields.io/badge/cpu-VexRiscv-c678dd)](https://github.com/SpinalHDL/VexRiscv)
+[![net](https://img.shields.io/badge/network-lwIP%202.2.0-2eb86b)](https://savannah.nongnu.org/projects/lwip/)
+[![license](https://img.shields.io/badge/license-GPL--2.0-d63b35)](#license)
+
+![LinkFPGA pinout for the Colorlight i9 v7.2](docs/pinout.svg)
 
 ---
 
-## What it does, in plain terms
+## Why this exists
+
+A modern music studio runs on three or four independent clocks at once:
+
+* a **network clock** (Ableton Link, the lingua franca of DAWs),
+* a **MIDI clock** (synths, drum machines, hardware sequencers),
+* an **analogue clock** (the modular rig and its triggers),
+* and the wall clock for the human in the room.
+
+Keeping them in sync is fragile, DAW-dependent, and CPU-dependent. The
+exact moment a "beat" hits can vary by tens of milliseconds depending on
+which laptop is on, which audio interface is plugged in, and which
+buffer size the DAW happens to be running.
+
+**LinkFPGA collapses all four clocks into one piece of dedicated
+hardware whose only job is to be the canonical timebase**, with a
+1 MHz hardware microsecond counter shared between every sync source.
+The Link mesh, the MIDI clock-out byte, the GPIO 24 PPQN edge, and the
+Eurorack input timestamp all reference the same counter — so latency
+between any two sources is bounded and known.
+
+---
+
+## Table of contents
+
+- [At a glance](#at-a-glance)
+- [What it does](#what-it-does)
+- [Use cases](#use-cases)
+- [Design philosophy](#design-philosophy)
+- [Quick start](#quick-start)
+- [Pinout](#pinout)
+- [Hardware × firmware split](#hardware--firmware-split)
+- [Sync sources](#sync-sources)
+- [Network stack](#network-stack)
+- [Boot architecture](#boot-architecture)
+- [Tech reference](#tech-reference)
+- [Repository layout](#repository-layout)
+- [Status](#status)
+- [Roadmap](#roadmap)
+- [See also](#see-also)
+- [License](#license)
+
+---
+
+## At a glance
+
+| | |
+|---|---|
+| **Board**          | Colorlight i9 v7.2 (Lattice ECP5 `LFE5U-45F-6BG381C`, 45 K LUT4, 108 KiB BRAM) |
+| **CPU**            | VexRiscv `standard` softcore @ 50 MHz |
+| **RAM**            | 8 MB on-board SDR SDRAM (M12L64322A) via LiteDRAM |
+| **Network**        | 1 × Gigabit Ethernet (Broadcom B50612D RGMII), full IPv4 + IPv6 dual-stack |
+| **Network stack**  | lwIP 2.2.0 (NO_SYS=1), TCP + UDP, IGMP + MLD, raw API |
+| **Web UI**         | On-device HTTP/1.0 server (lwIP TCP raw), GET + POST |
+| **Audio**          | N × TDM16 (configurable, default 2 = 32 ch in / 32 ch out) at 16-bit 48 kHz |
+| **Beat clock**     | 24 / 48 / 96 PPQN, beat, bar, start, stop, run, sync LED, peer LED, 1-PPS |
+| **MIDI**           | UART @ 31250 baud, hardware-injected clock / start / stop, hardware RX timestamping |
+| **Eurorack**       | TTL clock / reset / run inputs with HW edge detection, timestamping, and period meter |
+| **Toolchain**      | Yosys + nextpnr-ecp5 + prjtrellis + RISC-V GCC, all in a Docker image |
+| **Resource use**   | LUT 23 % · BRAM 53 % · LUT4 10 206 / 43 848 · DP16KD 57 / 108 |
+| **Sys timing**     | 66.7 MHz max at 50 MHz target (+33 % margin) |
+| **License**        | GPL-2.0 (matches upstream Ableton/link) |
+
+---
+
+## What it does
+
+In plain terms:
 
 * You plug a Colorlight i9 v7.2 into your network switch.
 * It appears as a **Link peer** to every DAW on the network — same
@@ -51,63 +124,78 @@ gigabit Ethernet in, audio + clock + MIDI out.
 * You can have **as many TDM16 audio ports as you want** — physical
   ones on the PMOD connectors, plus virtual ones that exist only as
   network endpoints with SDRAM-backed sample buffers (useful for
-  in-FPGA audio routing and fan-out).
+  in-FPGA fan-out and audio routing).
 
 ---
 
-## At a glance
+## Use cases
 
-```
-                    +---------------------------------------------------+
-                    |                Colorlight i9 v7.2                |
-                    |                LFE5U-45F-6BG381C                 |
-                    |                                                  |
-   GbE  ─>──────────┤   RGMII  ┌────────────┐    ┌──────────────────┐  |
-   PHY0             |          │  LiteEth   │    │  VexRiscv core   │  |
-                    |          │   MAC      │←──→│   + lwIP 2.2.0   │  |
-                    |          └────────────┘    │    + Link        │  |
-                    |                            │    + Link-Audio  │  |
-                    |              CSR ──────────│    + HTTP server │  |
-                    |               │            │    + WebUI       │  |
-                    |    ┌──────────┴──────┐     └────────┬─────────┘  |
-                    |    ▼          ▼      ▼              │            |
-                    |  Ghost     Beat    N × TDM16        │            |
-                    |  Time      Pulse   Core             │            |
-                    |  Unit      Gen                      │            |
-                    |    │         │       │              │            |
-                    +────┼─────────┼───────┼──────────────┼────────────+
-                         │         │       │              │
-                         │     PMODH:      PMOD A,F,D,    ETH RX/TX
-                         │     beat clock  G,I,J,K,L:     (you’re
-                         │     + transport TDM16 ports    plugged in)
-                         │     pulses
-                         └─→ used internally by BeatPulseGen
-```
+**Sync a Eurorack rig with a DAW.** Patch your modular's clock-out
+into `EURO_CLK_IN`, your reset trigger into `EURO_RST_IN`, and your
+run gate into `EURO_RUN_IN`. Set the device to **Eurorack follower
+mode** in the web UI. The Link mesh now follows the modular, the DAW
+follows Link, and the MIDI port emits the same clock with zero
+software jitter — your synths line up with your patch cables.
 
-| | |
-|---|---|
-| **Board**          | Colorlight i9 v7.2 (Lattice ECP5 `LFE5U-45F-6BG381C`, 45 K LUT4, 108 KiB BRAM) |
-| **CPU**            | VexRiscv `standard` softcore @ 50 MHz |
-| **RAM**            | 8 MB on-board SDR SDRAM (M12L64322A) via LiteDRAM |
-| **Network**        | 1 × Gigabit Ethernet (Broadcom B50612D RGMII), full IPv4 + IPv6 |
-| **Network stack**  | lwIP 2.2.0 (NO_SYS=1), TCP + UDP, IGMP + MLD, raw API |
-| **Web UI**         | On-device HTTP/1.0 server (lwIP TCP raw), GET + POST |
-| **Audio**          | N × TDM16 (configurable, default 2 = 32 ch in / 32 ch out) at 16-bit 48 kHz |
-| **Beat clock**     | 24 / 48 / 96 PPQN, beat, bar, start, stop, run, sync LED, peer LED, 1-PPS |
-| **MIDI**           | UART @ 31250 baud, hardware-injected clock / start / stop, hardware RX timestamping |
-| **Eurorack**       | TTL clock / reset / run inputs with HW edge detection, timestamping, and period meter |
-| **Toolchain**      | Yosys + nextpnr-ecp5 + prjtrellis + RISC-V GCC, all in a Docker image |
-| **Resource use**   | LUT 23 % · BRAM 53 % · LUT4 10 206 / 43 848 · DP16KD 57 / 108 |
-| **Sys timing**     | 66.7 MHz max at 50 MHz target (+33 % margin) |
-| **License**        | GPL-2.0 (matches upstream Ableton/link) |
+**Sync a vintage drum machine with a Link mesh.** Patch
+`CLK_24PPQN` and `START_PULSE` from `pmodh` into your TR-808 / 909 /
+606 / DR-110's DIN-SYNC input. The drum machine now follows the Link
+session, even if no one in the room is running a DAW.
+
+**Drive a hardware MIDI rig from a software DAW.** Connect the device
+to your network and to your synth's MIDI IN. The DAW publishes
+tempo over Link → LinkFPGA forwards it as 31250-baud MIDI clock with
+hardware-driven byte injection → the synth's onboard arpeggiator
+sounds rock-solid.
+
+**Replace a CoreAudio AVB mesh with a Link-Audio mesh.** Use the
+Link-Audio extension to publish channels from one TDM-attached codec
+on one device and subscribe to them from another device's TDM port,
+beat-tagged so the receiver plays back perfectly aligned.
+
+**Build a custom modular-Eurorack-meets-IP-audio bridge.** Combine
+the configurable N × TDM16 ports with the Eurorack inputs and the
+beat-pulse outputs. The default `--num-physical-tdm-ports 2` is just
+the starting point: scale up to 8 physical ports, or add virtual
+ports for in-FPGA audio routing.
+
+---
+
+## Design philosophy
+
+> **Hardware where it has to happen at sample rate.
+> Firmware where it has to be flexible.**
+
+The protocol spec
+([`LINK_PROTOCOL_SPEC.md` §11](./LINK_PROTOCOL_SPEC.md)) calls out
+which parts of an Ableton Link implementation deserve hardware
+acceleration. This implementation follows that split:
+
+> Anything that has to happen at sample rate or sub-µs latency goes in
+> gateware — the ghost-time counter, the beat-pulse generator, the
+> TDM serdes, the MIDI clock auto-injector, the Eurorack edge
+> detector, the byte sniffer that timestamps incoming MIDI clock at
+> the stop bit. **None of these involve the CPU on the hot path.**
+>
+> Anything that happens once per network packet (a few thousand times
+> per second at most) lives in firmware — TLV parsing, the peer table,
+> session election, the median filter on measurement samples, HTTP
+> handlers. **The 50 MHz VexRiscv has more cycles per Link event than
+> it knows what to do with.**
+
+The result is a system where the **timing-critical path is fully
+deterministic** (no IRQ latency, no scheduler jitter, no firmware bugs
+can corrupt the beat grid) and the **policy-critical path is easy to
+modify** (Link's session election rules are 200 lines of C; the HTTP
+admin UI is 300 lines of C; the protocol parser is 400 lines of C).
 
 ---
 
 ## Quick start
 
-You need Docker and a JTAG/SPI programmer that can talk to the i9 v7.2
-(`ecpprog` works fine over USB-Blaster, `openFPGALoader` works with
-the FT2232 dongles).
+You need Docker and a JTAG/SPI programmer that can talk to the
+i9 v7.2 (`ecpprog` works fine over USB-Blaster, `openFPGALoader`
+works with FT2232 dongles).
 
 ```bash
 git clone git@github.com:DatanoiseTV/colorlight-i9-abletonlink.git
@@ -122,6 +210,9 @@ cd colorlight-i9-abletonlink
 
 # Drop into the toolchain shell:
 ./docker-build.sh --shell
+
+# Regenerate the pinout SVG after editing platform_i9.py:
+./docker-build.sh --gen-pinout
 ```
 
 The Docker image works **natively on both `x86_64` and Apple-Silicon
@@ -136,7 +227,7 @@ build/colorlight_i5/
 ├── gateware/colorlight_i5.svf                  ← JTAG/SVF
 └── software/link_firmware/
     ├── link_firmware.elf                       ← debuggable ELF
-    └── link_firmware.bin                       ← serialboot payload (~132 KB)
+    └── link_firmware.bin                       ← serialboot payload (~133 KB)
 ```
 
 ### Flashing
@@ -180,78 +271,34 @@ no further config is needed).
    `STOP_PULSE` to a sequencer's run/stop input, and route TDM
    port 0 / port 1 to your codec board.
 
----
-
-## Hardware ↔ firmware split
-
-The protocol spec
-([`LINK_PROTOCOL_SPEC.md` §11](./LINK_PROTOCOL_SPEC.md)) calls out
-which parts of an Ableton Link implementation deserve hardware
-acceleration. This implementation follows that split, **the principle
-being: anything that has to happen at sample rate or sub-µs goes in
-gateware; anything that happens once per packet (a few thousand times
-per second at most) lives in firmware.**
-
-| Concern | HW (Migen) | FW (VexRiscv) |
-|---|---|---|
-| Ethernet MAC + RGMII PHY | LiteEth | — |
-| TCP / IP / UDP / ARP / IGMP / MLD | — | lwIP 2.2.0 raw API |
-| TLV parse, peer table, BYEBYE handling | — | `link.c` |
-| Heartbeat scheduler (ALIVE every 250 ms) | — | `link.c` (uses HW µs counter) |
-| **Ghost-time arithmetic** (host ↔ ghost) | **`GhostTimeUnit`** (64-bit µs counter + xform) | thin C wrapper |
-| Median filter on 100 measurement samples | — | `median.c` |
-| Session election + 30 s remeasurement | — | `session.c` |
-| **Beat clock pulses** (24/48/96 PPQN, bar) | **`BeatPulseGen`** | sets next-beat target via CSR |
-| **Start/Stop GPIO pulses** | **`BeatPulseGen`** | sets `play/stop` flags via CSR |
-| **TDM16 serdes** (16 ch in + 16 ch out per port) | **`TDM16Core`** | sample registers + per-frame IRQ |
-| AudioBuffer pack/unpack (raw `i16` BE) | — | `link_audio.c` |
-| `kChannelRequest` / `kPong` / etc. | — | `link_audio.c` |
-| **MIDI 31250 baud UART** | **`MidiCore`** | thin CSR wrapper |
-| **MIDI clock / start / stop TX** (zero-jitter, beat-pulse-driven) | **`MidiCore` auto-injector** | `midi_set_auto_tx()` enable bits |
-| **MIDI RX byte timestamping** (±1 µs, hardware-latched) | **`MidiCore` sniffer + GhostTime** | `midi_tick()` drains the RT slot |
-| **Eurorack edge detection + period meter** | **`EurorackInput`** | `euro_tick()` polls counts |
-| MIDI / Eurorack tempo follower state machine | — | `midi.c` / `eurorack.c` |
-| HTTP/1.0 admin UI | — | `http_server.c` (lwIP raw TCP) |
-| Static HTML page + JSON API | — | `webui.c` |
-
-Everything in **bold** is custom Migen — see `litex_soc/`. The four
-custom modules use the standard LiteX CSR bus, so the firmware reads
-and writes them via the auto-generated `csr.h`.
+For an end-to-end walkthrough of the sync source modes, see
+[`docs/sync-guide.md`](docs/sync-guide.md).
 
 ---
 
 ## Pinout
 
-![LinkFPGA pinout for the Colorlight i9 v7.2](docs/pinout.svg)
-
-The Colorlight i9 v7.2 exposes its user GPIO via PMOD-style headers
-identified in `litex_boards.platforms.colorlight_i5` as `pmode`,
-`pmodf`, `pmodd`, `pmodg`, `pmodh`, `pmodi`, `pmodj`, `pmodk`, `pmodl`,
-plus `pmodc` (which is partially reserved for the on-board user LED
-and the `cpu_reset_n` button — its remaining 6 pins host the MIDI
-TX/RX and the Eurorack inputs). The diagram above shows every pin on
-every connector colour-coded by LinkFPGA function for the default
-build (`--num-physical-tdm-ports 2`), laid out to mirror the actual
-physical PCB (P3 top-left, HDMI top-centre, P2 top-right, P4 left,
-P1 right, P5 bottom-left, P6 bottom-right).
-
-### Regenerating the diagram
-
-The diagram is **generated** from the live platform definition by
-[`tools/gen_pinout.py`](tools/gen_pinout.py), which introspects
-`litex_boards.platforms.colorlight_i5._connectors_v7_2` for the
+The diagram at the top of this README is **auto-generated** from the
+live platform definitions by
+[`tools/gen_pinout.py`](tools/gen_pinout.py). It introspects
+`litex_boards.platforms.colorlight_i5._connectors_v7_2` for the actual
 PMOD pin lists and `litex_soc.platform_i9` for the function-to-pin
-map. To regenerate after a pinout change:
+map, walks every `Subsignal`/`Pins` record, and renders the SVG with
+one cell per pin and the appropriate colour. **It never goes stale** —
+re-run after any platform-file change:
 
 ```bash
 ./docker-build.sh --gen-pinout                # default 2 TDM16 ports
 ./docker-build.sh --gen-pinout -n 4           # 4 physical TDM16 ports
 ```
 
-That writes `docs/pinout.svg` in place. Because the generator pulls
-straight from the platform module, the diagram never goes stale.
+The geometry mirrors the physical PCB: P3 top-left, HDMI top-centre,
+P2 top-right, P4 vertical on the left, P1 vertical on the right
+(showing the dual GbE PHY pin assignments), P5 bottom-left, P6
+bottom-right.
 
-### TDM16 ports
+<details>
+<summary><b>TDM16 port pin layout</b></summary>
 
 Each physical TDM16 port consumes 5 pins of one PMOD:
 
@@ -284,11 +331,13 @@ just have no associated physical pins. Useful for in-FPGA fan-out and
 audio routing.
 
 ```bash
-# 2 physical + 4 virtual = 6 TDM16 ports total
 ./docker-build.sh --num-tdm-ports 6 --num-physical-tdm-ports 2
+# 2 physical + 4 virtual = 6 TDM16 ports total
 ```
+</details>
 
-### MIDI port + Eurorack inputs (`pmodc`)
+<details>
+<summary><b>MIDI port + Eurorack input pin layout (`pmodc`)</b></summary>
 
 `pmodc` has the layout `"P17 R18 C18 L2 M17 R17 T18 K18"`. Pins 3
 (`L2` = `user_led_n`) and 7 (`K18` = `cpu_reset_n`) are reserved for
@@ -310,8 +359,10 @@ need a small interface board between the +5..10 V Eurorack signal
 and the FPGA pin. A simple resistor divider + Schmitt trigger
 (74HC14) does the job; a Schottky clamp on the input is recommended
 to protect against the occasional negative spike from a CV cable.
+</details>
 
-### Beat / transport pulse outputs (`pmodh`)
+<details>
+<summary><b>Beat / transport pulse output pin layout (`pmodh`)</b></summary>
 
 `pmodh` has 6 usable pins (the 1st and 5th are GND/VCC), which is
 what `BeatPulseGen` exposes externally. The other pulse outputs
@@ -330,21 +381,10 @@ generated internally and can be brought out by editing
 
 Pulse width is 1 ms by default, configurable via the `pulse_width`
 CSR.
+</details>
 
-### Other onboard pins
-
-| Function       | FPGA pin |
-|----------------|----------|
-| 25 MHz clock   | `P3`     |
-| User LED       | `L2`     |
-| `cpu_reset_n`  | `K18`    |
-| Serial TX / RX | `J17` / `H18` |
-| ETH PHY 0 (used) | `U19`/`L19` clocks, `M20` rxc, `K2 L1 N1 P1` rxd, `K1` txc, `G2 H1 J1 J3` txd, `P4` rst, `N5/P5` mdc/mdio |
-
-(Eth PHY1 is wired in the gateware but not used by the firmware in
-this build.)
-
-### SDRAM (cross-checked)
+<details>
+<summary><b>SDRAM, ETH PHYs, on-board pins (cross-checked vs wuxx)</b></summary>
 
 Every SDRAM signal was cross-checked between the upstream
 `litex_boards.platforms.colorlight_i5` v7.2 IO list and the original
@@ -365,6 +405,46 @@ controllers are insensitive to DQ permutation (the controller writes
 and reads through the same mapping, so software always sees
 consistent data). Address pins, BA, and the control lines all match
 exactly.
+
+| Function       | FPGA pin |
+|----------------|----------|
+| 25 MHz clock   | `P3`     |
+| User LED       | `L2`     |
+| `cpu_reset_n`  | `K18`    |
+| Serial TX / RX | `J17` / `H18` |
+| ETH PHY 0 (used) | `U19`/`L19` clocks, `M20` rxc, `K2 L1 N1 P1` rxd, `K1` txc, `G2 H1 J1 J3` txd, `P4` rst, `N5/P5` mdc/mdio |
+</details>
+
+---
+
+## Hardware × firmware split
+
+| Concern | HW (Migen) | FW (VexRiscv) |
+|---|---|---|
+| Ethernet MAC + RGMII PHY | LiteEth | — |
+| TCP / IP / UDP / ARP / IGMP / MLD | — | lwIP 2.2.0 raw API |
+| TLV parse, peer table, BYEBYE handling | — | `link.c` |
+| Heartbeat scheduler (ALIVE every 250 ms) | — | `link.c` (uses HW µs counter) |
+| **Ghost-time arithmetic** (host ↔ ghost) | **`GhostTimeUnit`** (64-bit µs counter + xform) | thin C wrapper |
+| Median filter on 100 measurement samples | — | `median.c` |
+| Session election + 30 s remeasurement | — | `session.c` |
+| **Beat clock pulses** (24/48/96 PPQN, bar) | **`BeatPulseGen`** | sets next-beat target via CSR |
+| **Start/Stop GPIO pulses** | **`BeatPulseGen`** | sets `play/stop` flags via CSR |
+| **TDM16 serdes** (16 ch in + 16 ch out per port) | **`TDM16Core`** | sample registers + per-frame IRQ |
+| AudioBuffer pack/unpack (raw `i16` BE) | — | `link_audio.c` |
+| `kChannelRequest` / `kPong` / etc. | — | `link_audio.c` |
+| **MIDI 31250 baud UART** | **`MidiCore`** | thin CSR wrapper |
+| **MIDI clock / start / stop TX** (zero-jitter, beat-pulse-driven) | **`MidiCore` auto-injector** | `midi_set_auto_tx()` enable bits |
+| **MIDI RX byte timestamping** (±1 µs, hardware-latched) | **`MidiCore` sniffer + GhostTime** | `midi_tick()` drains the RT slot |
+| **Eurorack edge detection + period meter** | **`EurorackInput`** | `euro_tick()` polls counts |
+| MIDI / Eurorack tempo follower state machine | — | `midi.c` / `eurorack.c` |
+| HTTP/1.0 admin UI | — | `http_server.c` (lwIP raw TCP) |
+| Static HTML page + JSON API | — | `webui.c` |
+
+Everything in **bold** is custom Migen — see `litex_soc/`. The custom
+modules use the standard LiteX CSR bus, so the firmware reads and
+writes them via the auto-generated `csr.h`. For a deeper dive on the
+SoC architecture, see [`docs/architecture.md`](docs/architecture.md).
 
 ---
 
@@ -431,6 +511,11 @@ Eurorack / GPIO pulses) stay coherent at the µs level.
 | **Leader (default)** | source of truth | TX clock auto-driven, RX measured but ignored | inputs measured but ignored |
 | **MIDI follower** | tempo set from MIDI RX clock period | TX clock auto-driven (loopback OK), RX drives Link | measured but ignored |
 | **Eurorack follower** | tempo set from CLK_IN period; RST_IN snaps to beat 0; RUN_IN drives play state | TX clock auto-driven | drives Link |
+
+For practical wiring examples and follower-mode tuning, see
+[`docs/sync-guide.md`](docs/sync-guide.md).
+
+---
 
 ## Network stack
 
@@ -503,7 +588,7 @@ Why this split? Because the firmware doesn't fit in BRAM:
   ECP5 part.
 * The BIOS alone is ~35 KiB.
 * lwIP's `.text` is ~80 KiB; our app + Link/Link-Audio is ~50 KiB.
-* Total firmware is ~132 KiB code + ~180 KiB BSS (lwIP heap, pbuf
+* Total firmware is ~133 KiB code + ~180 KiB BSS (lwIP heap, pbuf
   pool, jitter buffers, peer table…). Won't fit in BRAM under any
   configuration.
 
@@ -511,7 +596,98 @@ So we use the **standard production-grade LiteX pattern**: tiny BIOS
 in BRAM that initialises SDRAM and loads a separate firmware ELF
 (`link_firmware.elf`) into main_ram via serialboot/spiboot, then
 jumps. This is exactly how every non-trivial LiteX project on a small
-ECP5 boots.
+ECP5 boots. See [`docs/architecture.md`](docs/architecture.md) for
+the full picture.
+
+---
+
+## Tech reference
+
+<details>
+<summary><b>Resource usage (default 2 × TDM16 build)</b></summary>
+
+These are the actual nextpnr-ecp5 numbers from the in-tree Docker
+build at the default `--num-tdm-ports 2`:
+
+| Resource              | Used  | Available | %     |
+|-----------------------|------:|----------:|------:|
+| LUT4 (TRELLIS_SLICE)  | 10 206 | 43 848   | 23.3 % |
+| BRAM (DP16KD, 18 Kbit)|     57 |     108   | 52.8 % |
+| MULT18X18D (DSP)      |      4 |      72   |  5.6 % |
+| EHXPLLL (PLLs)        |      2 |       4   |   50 % |
+| TRELLIS_IO (pads)     |     90 |     245   |   37 % |
+
+The MIDI core costs ~600 LUTs (custom 31250-baud UART + TX
+arbiter + RX MIDI parser) and the Eurorack input core ~300 LUTs
+(three sync chains + edge detect + period meter). Both fit
+without touching the BRAM budget.
+</details>
+
+<details>
+<summary><b>Timing closure (default <code>--sys-clk-freq 50e6</code>)</b></summary>
+
+| Clock                  | Target  | Achieved | Margin |
+|------------------------|--------:|---------:|-------:|
+| `sys` (CPU + custom IP)| 50.0 MHz| 66.7 MHz | +33.4 % |
+| `audio` (TDM MCLK)     | 24.6 MHz| 136 MHz | +453 % |
+| `eth_rx` (RGMII)       |125.0 MHz| 99 MHz | −20 % * |
+
+\* The `eth_rx` STA pessimism is a known LiteEth/ECP5 quirk. The
+actual RGMII path is source-synchronous on the Broadcom B50612D PHY
+with a programmable skew, so it works in practice — the upstream
+`colorlight_i5` LiteX target reports the same warning.
+</details>
+
+<details>
+<summary><b>Firmware footprint</b></summary>
+
+```
+   text     data     bss      total       file
+  133167    120     179560   312847       link_firmware.elf
+  ~80 KB lwIP code · ~35 KB Link/Link-Audio · ~16 KB http+webui
+  ~64 KB lwIP heap · ~24 KB pbuf pool · ~90 KB our buffers
+```
+
+The ~313 KB total RAM footprint sits comfortably inside the 8 MB SDRAM
+of the i9 v7.2.
+</details>
+
+<details>
+<summary><b>Build constants exposed to firmware</b></summary>
+
+`litex_soc/soc.py` calls `add_constant(...)` for everything the
+firmware should know about at runtime. They show up in the
+auto-generated `generated/soc.h`:
+
+```
+LINK_NUM_TDM_PORTS          = 2     // total physical+virtual
+LINK_NUM_PHYSICAL_TDM_PORTS = 2     // hard-pinned on PMODs
+LINK_NUM_VIRTUAL_TDM_PORTS  = 0     // SDRAM-only
+LINK_TDM_CHANNELS_PER_PORT  = 16
+LINK_TDM_SAMPLE_WIDTH       = 16
+LINK_TDM_FS_HZ              = 48000
+MAIN_RAM_BOOT_ADDRESS       = 0x40000000
+```
+</details>
+
+<details>
+<summary><b>Latency budget</b></summary>
+
+```
+sender DAW commit
+   ↓ ~100 µs   (DAW audio thread)
+sender NIC TX
+   ↓ ~50 µs    (1 GbE switch)
+i9 PHY RX
+   ↓ ~10 µs    (LiteEth MAC + lwIP raw UDP dispatch)
+firmware AudioBuffer parse + schedule
+   ↓ <1 sample (TDM serialiser, 21 µs at 48 kHz)
+ADC line out
+```
+
+Target end-to-end: **≤ 1 ms**, hard ceiling ~2 ms, dominated by the
+DAW side. The hardware itself adds well under 100 µs.
+</details>
 
 ---
 
@@ -524,6 +700,12 @@ colorlight-i9-abletonlink/
 ├── Dockerfile                      ← reproducible toolchain image
 ├── docker-build.sh                 ← one-shot Docker wrapper
 ├── build.py                        ← LiteX build entry point
+├── docs/                           ── extra docs + assets
+│   ├── pinout.svg                  ←   auto-generated pinout diagram
+│   ├── architecture.md             ←   deep dive on the SoC + firmware
+│   └── sync-guide.md               ←   practical sync source guide
+├── tools/
+│   └── gen_pinout.py               ← live-introspection SVG generator
 ├── litex_soc/                      ── gateware (Migen / LiteX)
 │   ├── soc.py                      ←   top-level SoC subclass
 │   ├── platform_i9.py              ←   PMOD pin map for the i9 v7.2
@@ -532,7 +714,7 @@ colorlight-i9-abletonlink/
 │   ├── tdm.py                      ←   TDM16 serializer/deserializer
 │   ├── midi.py                     ←   hardware MIDI 31250 baud + auto sync TX
 │   ├── eurorack.py                 ←   Eurorack edge detect + period meter
-│   └── link_filter.py              ←   protocol header sniffer (unused; kept for ref)
+│   └── link_filter.py              ←   protocol header sniffer (kept for reference)
 ├── firmware/                       ── VexRiscv firmware (C + asm)
 │   ├── crt0.S                      ←   minimal RISC-V startup
 │   ├── linker.ld                   ←   firmware ELF linker script (main_ram)
@@ -559,90 +741,6 @@ colorlight-i9-abletonlink/
 │   └── config.h                    ←   compile-time defaults
 └── build/                          ← (gitignored) gateware + firmware artefacts
 ```
-
----
-
-## Tech reference
-
-### Resource usage (default 2 × TDM16 build)
-
-These are the actual nextpnr-ecp5 numbers from the in-tree Docker
-build at the default `--num-tdm-ports 2`:
-
-| Resource              | Used  | Available | %     |
-|-----------------------|------:|----------:|------:|
-| LUT4 (TRELLIS_SLICE)  | 10 206 | 43 848   | 23.3 % |
-| BRAM (DP16KD, 18 Kbit)|     57 |     108   | 52.8 % |
-| MULT18X18D (DSP)      |      4 |      72   |  5.6 % |
-| EHXPLLL (PLLs)        |      2 |       4   |   50 % |
-| TRELLIS_IO (pads)     |     90 |     245   |   37 % |
-
-The MIDI core costs ~600 LUTs (custom 31250-baud UART + TX
-arbiter + RX MIDI parser) and the Eurorack input core ~300 LUTs
-(three sync chains + edge detect + period meter). Both fit
-without touching the BRAM budget.
-
-Plenty of headroom on logic and IO. BRAM usage is dominated by the
-BIOS ROM (64 KiB), VexRiscv I/D caches (8 KiB each), and the LiteEth
-RX/TX FIFOs.
-
-### Timing closure (default `--sys-clk-freq 50e6`)
-
-| Clock                  | Target  | Achieved | Margin |
-|------------------------|--------:|---------:|-------:|
-| `sys` (CPU + custom IP)| 50.0 MHz| 66.7 MHz | +33.4 % |
-| `audio` (TDM MCLK)     | 24.6 MHz| 136 MHz | +453 % |
-| `eth_rx` (RGMII)       |125.0 MHz| 99 MHz | −20 % * |
-
-\* The `eth_rx` STA pessimism is a known LiteEth/ECP5 quirk. The
-actual RGMII path is source-synchronous on the Broadcom B50612D PHY
-with a programmable skew, so it works in practice — the upstream
-`colorlight_i5` LiteX target reports the same warning.
-
-### Firmware footprint
-
-```
-   text     data     bss      total       file
-  132259    104    179504   311867       link_firmware.elf
-  ~80 KB lwIP code · ~35 KB Link/Link-Audio · ~16 KB http+webui
-  ~64 KB lwIP heap · ~24 KB pbuf pool · ~90 KB our buffers
-```
-
-The ~312 KB total RAM footprint sits comfortably inside the 8 MB SDRAM
-of the i9 v7.2.
-
-### Build constants exposed to firmware
-
-`litex_soc/soc.py` calls `add_constant(...)` for everything the
-firmware should know about at runtime. They show up in the
-auto-generated `generated/soc.h`:
-
-```
-LINK_NUM_TDM_PORTS          = 2     // total physical+virtual
-LINK_NUM_PHYSICAL_TDM_PORTS = 2     // hard-pinned on PMODs
-LINK_NUM_VIRTUAL_TDM_PORTS  = 0     // SDRAM-only
-LINK_TDM_CHANNELS_PER_PORT  = 16
-LINK_TDM_SAMPLE_WIDTH       = 16
-LINK_TDM_FS_HZ              = 48000
-MAIN_RAM_BOOT_ADDRESS       = 0x40000000
-```
-
-### Latency budget (target)
-
-```
-sender DAW commit
-   ↓ ~100 µs   (DAW audio thread)
-sender NIC TX
-   ↓ ~50 µs    (1 GbE switch)
-i9 PHY RX
-   ↓ ~10 µs    (LiteEth MAC + lwIP raw UDP dispatch)
-firmware AudioBuffer parse + schedule
-   ↓ <1 sample (TDM serialiser, 21 µs at 48 kHz)
-ADC line out
-```
-
-Target end-to-end: **≤ 1 ms**, hard ceiling ~2 ms, dominated by the
-DAW side. The hardware itself adds well under 100 µs.
 
 ---
 
@@ -676,8 +774,38 @@ DAW side. The hardware itself adds well under 100 µs.
 | MIDI follower mode (Link tempo from incoming clock) | ✓ |
 | Eurorack `EurorackInput` core (CLK / RST / RUN, edge + period) | ✓ |
 | Eurorack follower mode (Link tempo + transport from modular) | ✓ |
-| Second GbE PHY | optional via `--with-second-eth`, gateware-only |
 | Auto-spiboot of firmware on cold start | wired (`MAIN_RAM_BOOT_ADDRESS`) — not yet tested against hardware |
+| Second GbE PHY | optional via `--with-second-eth`, gateware-only |
+
+---
+
+## Roadmap
+
+The protocol-level work is feature-complete; the focus now is on
+hardware bring-up, polish, and a few quality-of-life additions.
+
+* **Bench-test on actual hardware.** Verify SDRAM init at 50 MHz on a
+  real i9 v7.2, measure the actual MIDI/Eurorack jitter with a scope,
+  validate that DHCPv4 + IPv6 SLAAC come up cleanly on a real network.
+* **Auto-spiboot.** The `MAIN_RAM_BOOT_ADDRESS` is wired but the SPI
+  flash payload isn't yet tooled for end-user flashing. Add a
+  `make flash-firmware` target that loads `link_firmware.bin` to a
+  known SPI offset.
+* **`--num-physical-tdm-ports > 2`.** With more than 2 ports the build
+  will conflict with the on-board UART pins on `pmodj[0]/[4]`. Either
+  move the serial console or skip those PMOD slots automatically.
+* **Bigger BRAM allocation for lwIP.** The current 8 KiB heap +
+  4 entry pbuf pool is conservative; bumping it would let us run the
+  full HTTP UI under load without dropping packets. Trade-off: BRAM
+  utilisation is already 53 %.
+* **Beat-time-locked TDM RX scheduling.** Today the `link_audio.c`
+  jitter buffer is FIFO; phase-locking it to `chunk.beginBeats` would
+  give true sample-accurate playback regardless of network jitter.
+* **Second GbE PHY.** Already wired in gateware via
+  `--with-second-eth`. Add firmware-side use of it (e.g. one PHY for
+  control / web UI, the other for audio traffic).
+* **External Eurorack break-out PCB.** Reference design for the
+  5 V → 3.3 V level shifter / Schmitt trigger interface board.
 
 ---
 
@@ -687,6 +815,11 @@ DAW side. The hardware itself adds well under 100 µs.
   spec, with byte-by-byte references back into the original Ableton/link
   C++ source. Read this to understand exactly what the firmware
   implements.
+* [`docs/architecture.md`](docs/architecture.md) — deep dive on the
+  SoC + firmware architecture, the rationale behind each Migen module,
+  and a tour of the boot flow.
+* [`docs/sync-guide.md`](docs/sync-guide.md) — practical wiring and
+  configuration guide for the Link / MIDI / Eurorack sync sources.
 * [Ableton/link](https://github.com/Ableton/link) — the reference C++
   implementation that the spec was derived from.
 * [Colorlight i9 v7.2 board notes](https://github.com/wuxx/Colorlight-FPGA-Projects/blob/master/colorlight_i9_v7.2.md)
@@ -699,6 +832,8 @@ DAW side. The hardware itself adds well under 100 µs.
   stack we vendored into the firmware.
 * [YosysHQ OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build)
   — the open-source ECP5 toolchain bundled into the Docker image.
+
+---
 
 ## License
 
