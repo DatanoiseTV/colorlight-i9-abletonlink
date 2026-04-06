@@ -231,7 +231,25 @@ plus `pmodc` (which is partially reserved for the on-board user LED
 and the `cpu_reset_n` button — its remaining 6 pins host the MIDI
 TX/RX and the Eurorack inputs). The diagram above shows every pin on
 every connector colour-coded by LinkFPGA function for the default
-build (`--num-physical-tdm-ports 2`).
+build (`--num-physical-tdm-ports 2`), laid out to mirror the actual
+physical PCB (P3 top-left, HDMI top-centre, P2 top-right, P4 left,
+P1 right, P5 bottom-left, P6 bottom-right).
+
+### Regenerating the diagram
+
+The diagram is **generated** from the live platform definition by
+[`tools/gen_pinout.py`](tools/gen_pinout.py), which introspects
+`litex_boards.platforms.colorlight_i5._connectors_v7_2` for the
+PMOD pin lists and `litex_soc.platform_i9` for the function-to-pin
+map. To regenerate after a pinout change:
+
+```bash
+./docker-build.sh --gen-pinout                # default 2 TDM16 ports
+./docker-build.sh --gen-pinout -n 4           # 4 physical TDM16 ports
+```
+
+That writes `docs/pinout.svg` in place. Because the generator pulls
+straight from the platform module, the diagram never goes stale.
 
 ### TDM16 ports
 

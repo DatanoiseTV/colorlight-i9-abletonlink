@@ -24,5 +24,11 @@ if [[ "${1:-}" == "--shell" ]]; then
   exec docker run --rm -it -v "$HERE":/src -w /src "$IMAGE" bash "$@"
 fi
 
+if [[ "${1:-}" == "--gen-pinout" ]]; then
+  shift
+  exec docker run --rm -v "$HERE":/src -w /src "$IMAGE" \
+      python3 tools/gen_pinout.py "$@"
+fi
+
 exec docker run --rm -v "$HERE":/src -w /src "$IMAGE" \
     python3 build.py --build "$@"
