@@ -1,0 +1,21 @@
+# Build artefacts (LiteX gateware + firmware)
+build/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*~
+*.swp
+
+# clangd / language servers
+.cache/
+compile_commands.json
