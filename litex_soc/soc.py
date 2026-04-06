@@ -34,6 +34,8 @@ from liteeth.phy.ecp5rgmii import LiteEthPHYRGMII
 from .ghost_time import GhostTimeUnit
 from .beat_pulse import BeatPulseGen
 from .tdm import TDM16Core
+from .midi import MidiCore
+from .eurorack import EurorackInput
 from .platform_i9 import MAX_PHYSICAL_TDM_PORTS
 
 # NOTE: LinkPacketFilter is intentionally not instantiated.
@@ -253,6 +255,32 @@ class LinkFPGASoC(SoCCore):
             setattr(self.submodules, f"tdm{i}", core)
             self.add_csr(f"tdm{i}")
             self.irq.add(f"tdm{i}", use_loc_if_exists=True)
+
+        # ----- MIDI core ----------------------------------------------
+        # 31250 baud UART with hardware auto-injection of MIDI clock /
+        # start / stop bytes off the BeatPulseGen pulses, and hardware
+        # timestamping of incoming RT bytes for jitter-free sync.
+        midi_pads = platform.request("midi_uart", 0)
+        self.submodules.midi = MidiCore(
+            pads          = midi_pads,
+            sys_clk_freq  = sys_clk_freq,
+            ghost_time    = self.ghost_time,
+            beat_pulse    = self.beat_pulse,
+        )
+        self.add_csr("midi")
+        self.irq.add("midi", use_loc_if_exists=True)
+
+        # ----- Eurorack inputs ----------------------------------------
+        # 0..5 V (level-shifted to 3.3 V externally) clock / reset /
+        # run inputs with synchronisation, edge detection, microsecond
+        # timestamping, and period measurement — all in hardware.
+        euro_pads = platform.request("eurorack_in", 0)
+        self.submodules.eurorack = EurorackInput(
+            pads       = euro_pads,
+            ghost_time = self.ghost_time,
+        )
+        self.add_csr("eurorack")
+        self.irq.add("eurorack", use_loc_if_exists=True)
 
         # Tell the firmware (via a constant in the generated CSR header)
         # how many TDM ports there are and which are virtual, so it can

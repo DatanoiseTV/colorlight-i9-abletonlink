@@ -2,10 +2,13 @@
 
 **Ableton Link in hardware** — a self-contained LiteX/Migen SoC for the
 [Colorlight i9 v7.2](https://github.com/wuxx/Colorlight-FPGA-Projects/blob/master/colorlight_i9_v7.2.md)
-that joins Ableton Link sessions on your studio LAN, drives multi-channel
-TDM audio I/O, and emits sample-accurate beat-clock and transport pulses
-on dedicated GPIO pins. No host PC, no DAW, no audio driver — gigabit
-Ethernet in, audio + clock out.
+that joins Ableton Link sessions on a local network, drives
+multi-channel TDM audio I/O, and emits sample-accurate beat-clock,
+MIDI clock, and transport pulses on dedicated GPIO pins. Also speaks
+**MIDI clock + start/stop** at 31250 baud and accepts **Eurorack-level
+clock / reset / run inputs**, both with hardware timestamping for
+sub-microsecond sync precision. No host PC, no DAW, no audio driver —
+gigabit Ethernet in, audio + clock + MIDI out.
 
 > **Repo:** `git@github.com:DatanoiseTV/colorlight-i9-abletonlink.git`
 > **Spec:** [`LINK_PROTOCOL_SPEC.md`](./LINK_PROTOCOL_SPEC.md) — the
@@ -16,7 +19,7 @@ Ethernet in, audio + clock out.
 
 ## What it does, in plain terms
 
-* You plug a Colorlight i9 v7.2 into your studio switch.
+* You plug a Colorlight i9 v7.2 into your network switch.
 * It appears as a **Link peer** to every DAW on the network — same
   tempo, same beat phase, same play/stop state.
 * It exposes that beat grid as **physical signals**:
@@ -30,6 +33,19 @@ Ethernet in, audio + clock out.
   receivers can play them back in sync. Each subscribed channel maps
   into a slot on one of the device's TDM16 audio ports, so you can
   patch network audio into any TDM-capable codec (Cirrus, AKM, TI…).
+* It speaks **MIDI clock and start/stop** at 31250 baud on a TRS or
+  5-pin DIN MIDI port. The MIDI System Real-Time bytes (`0xF8`,
+  `0xFA`, `0xFC`) are **injected from gateware** off the same beat
+  pulses that drive the GPIO clock outputs — **zero software jitter**.
+  Incoming MIDI clock is also parsed in hardware: every 0xF8 byte is
+  timestamped with the same microsecond counter that drives the Link
+  ghost-time, so the device can lock its Link tempo to an external
+  MIDI clock source with sub-µs precision.
+* It accepts **Eurorack-level clock / reset / run inputs** on three
+  GPIO pins (with an external 5 V → 3.3 V level shifter / Schmitt
+  trigger). Edges are detected and timestamped in hardware, the period
+  is measured in hardware, and the device can be put into **follower
+  mode** to drive its Link tempo from the modular system's clock.
 * You configure it from a **built-in web UI** at `http://<board-ip>/`.
   Real HTTP, served from the device, no proxy, no host helper.
 * You can have **as many TDM16 audio ports as you want** — physical
@@ -78,9 +94,11 @@ Ethernet in, audio + clock out.
 | **Web UI**         | On-device HTTP/1.0 server (lwIP TCP raw), GET + POST |
 | **Audio**          | N × TDM16 (configurable, default 2 = 32 ch in / 32 ch out) at 16-bit 48 kHz |
 | **Beat clock**     | 24 / 48 / 96 PPQN, beat, bar, start, stop, run, sync LED, peer LED, 1-PPS |
+| **MIDI**           | UART @ 31250 baud, hardware-injected clock / start / stop, hardware RX timestamping |
+| **Eurorack**       | TTL clock / reset / run inputs with HW edge detection, timestamping, and period meter |
 | **Toolchain**      | Yosys + nextpnr-ecp5 + prjtrellis + RISC-V GCC, all in a Docker image |
-| **Resource use**   | LUT 21 % · BRAM 53 % · LUT4 9 277 / 43 848 · DP16KD 57 / 108 |
-| **Sys timing**     | 60.8 MHz max at 50 MHz target (+22 % margin) |
+| **Resource use**   | LUT 23 % · BRAM 53 % · LUT4 10 206 / 43 848 · DP16KD 57 / 108 |
+| **Sys timing**     | 66.7 MHz max at 50 MHz target (+33 % margin) |
 | **License**        | GPL-2.0 (matches upstream Ableton/link) |
 
 ---
@@ -149,7 +167,7 @@ no further config is needed).
 
 1. Power up. The on-board LED breathes for ~3 s, then turns solid
    once the firmware boots.
-2. Connect ETH0 to your studio LAN.
+2. Connect ETH0 to your network switch.
 3. Within ~1 s of cable insertion the `PEER_LED` lights up if Link
    peers are visible. `SYNC_LED` lights up after the first
    measurement round (typically <500 ms).
@@ -188,6 +206,11 @@ per second at most) lives in firmware.**
 | **TDM16 serdes** (16 ch in + 16 ch out per port) | **`TDM16Core`** | sample registers + per-frame IRQ |
 | AudioBuffer pack/unpack (raw `i16` BE) | — | `link_audio.c` |
 | `kChannelRequest` / `kPong` / etc. | — | `link_audio.c` |
+| **MIDI 31250 baud UART** | **`MidiCore`** | thin CSR wrapper |
+| **MIDI clock / start / stop TX** (zero-jitter, beat-pulse-driven) | **`MidiCore` auto-injector** | `midi_set_auto_tx()` enable bits |
+| **MIDI RX byte timestamping** (±1 µs, hardware-latched) | **`MidiCore` sniffer + GhostTime** | `midi_tick()` drains the RT slot |
+| **Eurorack edge detection + period meter** | **`EurorackInput`** | `euro_tick()` polls counts |
+| MIDI / Eurorack tempo follower state machine | — | `midi.c` / `eurorack.c` |
 | HTTP/1.0 admin UI | — | `http_server.c` (lwIP raw TCP) |
 | Static HTML page + JSON API | — | `webui.c` |
 
@@ -242,6 +265,29 @@ audio routing.
 # 2 physical + 4 virtual = 6 TDM16 ports total
 ./docker-build.sh --num-tdm-ports 6 --num-physical-tdm-ports 2
 ```
+
+### MIDI port + Eurorack inputs (`pmodc`)
+
+`pmodc` has the layout `"P17 R18 C18 L2 M17 R17 T18 K18"`. Pins 3
+(`L2` = `user_led_n`) and 7 (`K18` = `cpu_reset_n`) are reserved for
+on-board functions, so we use the other six pins for MIDI + Eurorack
+utility I/O. (`pmodc` is therefore unavailable for TDM16 ports —
+that's why the TDM16 slot map skips it.)
+
+| Pin (on `pmodc`) | FPGA | Signal       | Direction | Notes |
+|------------------|------|--------------|-----------|-------|
+| 0                | P17  | `MIDI_TX`    | OUT       | 31250 baud, drives a TRS or 5-pin DIN MIDI cable |
+| 1                | R18  | `MIDI_RX`    | IN        | external opto-isolator recommended for proper MIDI |
+| 2                | C18  | `EURO_CLK_IN`| IN        | rising-edge clock at a configurable PPQN |
+| 4                | M17  | `EURO_RST_IN`| IN        | rising-edge → snap to bar 1, beat 1 |
+| 5                | R17  | `EURO_RUN_IN`| IN        | level: high = play, low = stop |
+| 6                | T18  | reserved     | —         | free for expansion |
+
+The Eurorack inputs are 3.3 V LVCMOS — for actual modular use you
+need a small interface board between the +5..10 V Eurorack signal
+and the FPGA pin. A simple resistor divider + Schmitt trigger
+(74HC14) does the job; a Schottky clamp on the input is recommended
+to protect against the occasional negative spike from a CV cable.
 
 ### Beat / transport pulse outputs (`pmodh`)
 
@@ -299,6 +345,70 @@ consistent data). Address pins, BA, and the control lines all match
 exactly.
 
 ---
+
+## Sync sources
+
+LinkFPGA can be a clock follower OR a clock leader from any of three
+independent sources, all sharing the same hardware microsecond
+timebase (`GhostTimeUnit`):
+
+```
+                    ┌─────────────────────────────────────────────┐
+                    │            GhostTimeUnit                    │
+                    │     64-bit µs counter @ 1 MHz, hardware     │
+                    └─────┬──────────┬──────────────┬─────────────┘
+                          │          │              │
+                ┌─────────┴───┐ ┌────┴───────┐ ┌────┴─────────┐
+                │   Link      │ │   MIDI     │ │  Eurorack    │
+                │ measurement │ │  RX clock  │ │  CLK_IN edge │
+                │ ping/pong   │ │ timestamp  │ │  timestamp   │
+                │             │ │ + period   │ │  + period    │
+                └─────┬───────┘ └────┬───────┘ └────┬─────────┘
+                      │              │              │
+                      └──────────────┼──────────────┘
+                                     ▼
+                          firmware sync state machine
+                              ┌──────┴──────┐
+                              ▼             ▼
+                       link_set_local_   link_set_play()
+                          tempo()
+                              ▼             ▼
+                    ┌──────────────────────────┐
+                    │ BeatPulseGen + LinkAudio │
+                    │ + MIDI auto-TX           │
+                    └─────────┬────────────────┘
+                              │
+                ┌─────────────┴────────────────┐
+                ▼              ▼               ▼
+         24/48/96 PPQN     MIDI clock       Link audio
+         + transport       0xF8 / FA / FC   beat-tagged
+         pulses on PMOD    on MIDI_TX pad   PCM packets
+                              (zero
+                               jitter)
+```
+
+**Precision claims (measured against the gateware design):**
+
+| Source | Mechanism | Jitter / latency |
+|---|---|---|
+| Link → 24/48/96 PPQN GPIO | `BeatPulseGen` HW down-counters tick at 1 MHz | ±1 µs (one ghost-time tick) |
+| Link → MIDI clock TX | `MidiCore` auto-injector latches `clk_24` directly into the TX shift register | **zero firmware jitter**; one bit-cell (32 µs at 31250 baud) of fixed UART offset |
+| MIDI clock RX → BPM | HW samples the stop-bit edge of every 0xF8 byte and latches the µs counter | ±1 µs |
+| Eurorack CLK_IN → BPM | 3-stage MultiReg + edge detector + HW period meter | 3 sys cycles (60 ns) + ±1 µs |
+| External RST_IN → bar 1 reset | HW edge detect → IRQ → `link_set_play()` + reset origin | ≤1 main-loop pass (~10 µs at 50 MHz) |
+
+The firmware never has to time-stamp anything itself — every event
+arrives with a hardware timestamp from the same 1 MHz counter that
+drives the Link ghost-time, so all four time bases (Link / MIDI /
+Eurorack / GPIO pulses) stay coherent at the µs level.
+
+**Sync modes** (set via the web UI or `/api/sync`):
+
+| Mode | Link | MIDI | Eurorack |
+|---|---|---|---|
+| **Leader (default)** | source of truth | TX clock auto-driven, RX measured but ignored | inputs measured but ignored |
+| **MIDI follower** | tempo set from MIDI RX clock period | TX clock auto-driven (loopback OK), RX drives Link | measured but ignored |
+| **Eurorack follower** | tempo set from CLK_IN period; RST_IN snaps to beat 0; RUN_IN drives play state | TX clock auto-driven | drives Link |
 
 ## Network stack
 
@@ -398,6 +508,8 @@ colorlight-i9-abletonlink/
 │   ├── ghost_time.py               ←   64-bit µs counter + ghost xform
 │   ├── beat_pulse.py               ←   24/48/96 PPQN + start/stop pulses
 │   ├── tdm.py                      ←   TDM16 serializer/deserializer
+│   ├── midi.py                     ←   hardware MIDI 31250 baud + auto sync TX
+│   ├── eurorack.py                 ←   Eurorack edge detect + period meter
 │   └── link_filter.py              ←   protocol header sniffer (unused; kept for ref)
 ├── firmware/                       ── VexRiscv firmware (C + asm)
 │   ├── crt0.S                      ←   minimal RISC-V startup
@@ -419,6 +531,8 @@ colorlight-i9-abletonlink/
 │   ├── ghost_time.c / .h           ←   thin wrapper around the GhostTime CSRs
 │   ├── beat_pulse.c / .h           ←   thin wrapper around the BeatPulse CSRs
 │   ├── tdm.c / .h                  ←   thin wrapper around the TDM16 CSRs
+│   ├── midi.c / .h                 ←   MIDI sync state machine + CSR wrapper
+│   ├── eurorack.c / .h             ←   Eurorack input handler + sync mode
 │   ├── main.c                      ←   link_app_main entry + scheduler
 │   └── config.h                    ←   compile-time defaults
 └── build/                          ← (gitignored) gateware + firmware artefacts
@@ -433,13 +547,18 @@ colorlight-i9-abletonlink/
 These are the actual nextpnr-ecp5 numbers from the in-tree Docker
 build at the default `--num-tdm-ports 2`:
 
-| Resource              | Used | Available | %     |
-|-----------------------|-----:|----------:|------:|
-| LUT4 (TRELLIS_SLICE)  | 9 277 | 43 848   | 21.2 % |
-| BRAM (DP16KD, 18 Kbit)|    57 |     108   | 52.8 % |
-| MULT18X18D (DSP)      |     4 |      72   |  5.6 % |
-| EHXPLLL (PLLs)        |     2 |       4   |   50 % |
-| TRELLIS_IO (pads)     |    84 |     245   |   34 % |
+| Resource              | Used  | Available | %     |
+|-----------------------|------:|----------:|------:|
+| LUT4 (TRELLIS_SLICE)  | 10 206 | 43 848   | 23.3 % |
+| BRAM (DP16KD, 18 Kbit)|     57 |     108   | 52.8 % |
+| MULT18X18D (DSP)      |      4 |      72   |  5.6 % |
+| EHXPLLL (PLLs)        |      2 |       4   |   50 % |
+| TRELLIS_IO (pads)     |     90 |     245   |   37 % |
+
+The MIDI core costs ~600 LUTs (custom 31250-baud UART + TX
+arbiter + RX MIDI parser) and the Eurorack input core ~300 LUTs
+(three sync chains + edge detect + period meter). Both fit
+without touching the BRAM budget.
 
 Plenty of headroom on logic and IO. BRAM usage is dominated by the
 BIOS ROM (64 KiB), VexRiscv I/D caches (8 KiB each), and the LiteEth
@@ -449,9 +568,9 @@ RX/TX FIFOs.
 
 | Clock                  | Target  | Achieved | Margin |
 |------------------------|--------:|---------:|-------:|
-| `sys` (CPU + custom IP)| 50.0 MHz| 60.8 MHz | +21.7 % |
-| `audio` (TDM MCLK)     | 24.6 MHz|121   MHz | +393 % |
-| `eth_rx` (RGMII)       |125.0 MHz|105   MHz | −16 % * |
+| `sys` (CPU + custom IP)| 50.0 MHz| 66.7 MHz | +33.4 % |
+| `audio` (TDM MCLK)     | 24.6 MHz| 136 MHz | +453 % |
+| `eth_rx` (RGMII)       |125.0 MHz| 99 MHz | −20 % * |
 
 \* The `eth_rx` STA pessimism is a known LiteEth/ECP5 quirk. The
 actual RGMII path is source-synchronous on the Broadcom B50612D PHY
@@ -529,6 +648,12 @@ DAW side. The hardware itself adds well under 100 µs.
 | On-device HTTP admin UI (real TCP) | ✓ GET + POST |
 | Boot architecture (BIOS in BRAM, fw in SDRAM) | ✓ |
 | Docker build (linux/amd64 + linux/arm64) | ✓ |
+| Hardware MIDI core (31250 baud, auto-inject TX, sniffer RX) | ✓ |
+| MIDI clock / start / stop TX driven from BeatPulseGen | ✓ zero-jitter |
+| MIDI clock RX timestamping + HW period meter | ✓ ±1 µs |
+| MIDI follower mode (Link tempo from incoming clock) | ✓ |
+| Eurorack `EurorackInput` core (CLK / RST / RUN, edge + period) | ✓ |
+| Eurorack follower mode (Link tempo + transport from modular) | ✓ |
 | Second GbE PHY | optional via `--with-second-eth`, gateware-only |
 | Auto-spiboot of firmware on cold start | wired (`MAIN_RAM_BOOT_ADDRESS`) — not yet tested against hardware |
 

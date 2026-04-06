@@ -23,6 +23,8 @@
 #include "net.h"
 #include "link.h"
 #include "link_audio.h"
+#include "midi.h"
+#include "eurorack.h"
 #include "http_server.h"
 
 extern void session_tick(void);
@@ -69,6 +71,8 @@ void link_app_main(void) {
     tdm_init();
     link_init();
     link_audio_init();
+    midi_init();
+    euro_init();
 
     http_init(LINK_HTTP_PORT);
     webui_init();
@@ -90,6 +94,8 @@ void link_app_main(void) {
         link_tick();
         session_tick();
         link_audio_tick();
+        midi_tick();
+        euro_tick();
 
         for (int port = 0; port < LINK_NUM_TDM_PORTS; port++) {
             if (tdm_frame_pending(port)) {

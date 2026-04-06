@@ -41,6 +41,8 @@ LINK_OBJS = \
 	ghost_time.o\
 	beat_pulse.o\
 	tdm.o       \
+	midi.o      \
+	eurorack.o  \
 	net.o       \
 	netif_litex.o\
 	http_server.o\

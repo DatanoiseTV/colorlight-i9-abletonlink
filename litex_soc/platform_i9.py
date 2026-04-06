@@ -103,6 +103,37 @@ def _pulse_outputs():
     ]
 
 
+def _midi_uart():
+    """5-pin DIN / 3.5mm TRS MIDI on `pmodc[0..1]`. The LiteX UART core
+    drives this at 31250 baud (the MIDI standard).
+
+    `pmodc` has the layout `"P17 R18 C18 L2 M17 R17 T18 K18"`. Pin 3
+    is `L2` (= `user_led_n`) and pin 7 is `K18` (= `cpu_reset_n`),
+    so we MUST avoid those. Pins 0, 1, 2, 4, 5, 6 are free.
+    """
+    return [
+        Subsignal("tx", Pins("pmodc:0")),       # MIDI OUT (to synth's MIDI IN)
+        Subsignal("rx", Pins("pmodc:1")),       # MIDI IN  (from external clock source)
+        IOStandard("LVCMOS33"),
+    ]
+
+
+def _eurorack_inputs():
+    """Eurorack-style 0-5 V (level-shifted to 3.3 V externally) clock
+    and transport inputs on `pmodc[2,4,5]`. The signals are TTL-level
+    rising-edge-active. The board needs an external level-shifter /
+    Schmitt trigger between the +5..10 V Eurorack signal and the
+    3.3 V FPGA pin — see the README for the recommended interface
+    circuit.
+    """
+    return [
+        Subsignal("clk_in", Pins("pmodc:2")),   # rising-edge clock (PPQN configurable)
+        Subsignal("rst_in", Pins("pmodc:4")),   # reset / re-sync to bar 1, beat 1
+        Subsignal("run_in", Pins("pmodc:5")),   # run/stop level (high = playing)
+        IOStandard("LVCMOS33"),
+    ]
+
+
 def attach_link_io(platform, num_physical_tdm_ports=2):
     """Attach the LinkFPGA IO groups to the colorlight_i5 platform
     (configured for board=i9, revision=7.2).
@@ -125,5 +156,7 @@ def attach_link_io(platform, num_physical_tdm_ports=2):
     extensions = []
     for i in range(num_physical_tdm_ports):
         extensions.append(("link_tdm", i, *_tdm_port(i)))
-    extensions.append(("link_pulse", 0, *_pulse_outputs()))
+    extensions.append(("link_pulse",    0, *_pulse_outputs()))
+    extensions.append(("midi_uart",     0, *_midi_uart()))
+    extensions.append(("eurorack_in",   0, *_eurorack_inputs()))
     platform.add_extension(extensions)
