@@ -1,6 +1,6 @@
 # LinkFPGA — Ableton Link in hardware
 
-[![spec](https://img.shields.io/badge/spec-LINK__PROTOCOL__SPEC.md-7fd1ff)](../LINK_PROTOCOL_SPEC.md)
+[![spec](https://img.shields.io/badge/spec-LINK__PROTOCOL__SPEC.md-7fd1ff)](./LINK_PROTOCOL_SPEC.md)
 [![board](https://img.shields.io/badge/board-Colorlight%20i9%20v7.2-ffae57)](https://github.com/wuxx/Colorlight-FPGA-Projects/blob/master/colorlight_i9_v7.2.md)
 [![toolchain](https://img.shields.io/badge/toolchain-OSS%20CAD%20Suite-5fdc7e)](https://github.com/YosysHQ/oss-cad-suite-build)
 
@@ -9,7 +9,7 @@
 A LiteX / Migen SoC for the **Colorlight i9 v7.2**
 (Lattice ECP5 `LFE5U-45F-6BG381C`) that implements the Ableton Link and
 Link-Audio protocols described in
-[`../LINK_PROTOCOL_SPEC.md`](../LINK_PROTOCOL_SPEC.md). The goal: "Link,
+[`LINK_PROTOCOL_SPEC.md`](./LINK_PROTOCOL_SPEC.md). The goal: "Link,
 but as a black-box stomp on your studio rack" — gigabit Ethernet in,
 multi-channel TDM audio + beat-clock pulses out, configured from a tiny
 built-in web UI. No DAW, no host PC, no audio driver.
@@ -362,10 +362,11 @@ quality-of-implementation gaps that the next round of work will close.
 
 ## See also
 
-* [`../LINK_PROTOCOL_SPEC.md`](../LINK_PROTOCOL_SPEC.md) — the wire-format spec
-  this implementation follows, with byte-by-byte references back into
-  the original Ableton Link C++ source.
-* The reference C++ implementation in [`../include/ableton/`](../include/ableton/).
+* [`LINK_PROTOCOL_SPEC.md`](./LINK_PROTOCOL_SPEC.md) — the wire-format
+  spec this implementation follows, with byte-by-byte references back
+  into the original Ableton Link C++ source.
+* The reference C++ implementation lives at
+  [Ableton/link](https://github.com/Ableton/link).
 * [Colorlight i9 v7.2 board notes](https://github.com/wuxx/Colorlight-FPGA-Projects/blob/master/colorlight_i9_v7.2.md).
 * [LiteX](https://github.com/enjoy-digital/litex) and
   [litex-boards](https://github.com/litex-hub/litex-boards).
