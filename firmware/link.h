@@ -40,13 +40,19 @@ typedef struct {
     link_id_t       session_id;
     link_timeline_t timeline;
     link_startstop_t startstop;
-    uint32_t mep4_addr;     /* network byte order */
-    uint16_t mep4_port;     /* host byte order */
+    uint32_t mep4_addr;       /* host byte order */
+    uint16_t mep4_port;
     uint32_t aep4_addr;
     uint16_t aep4_port;
-    uint64_t expires_at_us; /* host time */
-    int      measured;      /* 1 once we have a GhostXForm for this session */
-    int64_t  ghost_offset;  /* GhostXForm intercept for that session */
+    uint8_t  mep6_addr[16];   /* IPv6 measurement endpoint */
+    uint16_t mep6_port;
+    int      have_mep6;
+    uint8_t  aep6_addr[16];   /* IPv6 audio endpoint */
+    uint16_t aep6_port;
+    int      have_aep6;
+    uint64_t expires_at_us;   /* host time */
+    int      measured;        /* 1 once we have a GhostXForm for this session */
+    int64_t  ghost_offset;    /* GhostXForm intercept for that session */
 } link_peer_t;
 
 extern link_id_t        link_self_id;

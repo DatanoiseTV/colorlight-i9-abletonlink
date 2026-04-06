@@ -96,7 +96,25 @@ RUN sed -i 's|cp newlib/libc.a __libc.a|cp libc.a __libc.a|' \
       -e 's|-I$(PICOLIBC_DIRECTORY)/newlib/libc/include|-I$(PICOLIBC_DIRECTORY)/libc/include/sys|' \
       /opt/litex/litex/litex/soc/software/common.mak && \
     sed -i '4a #include <inttypes.h>' \
-      /opt/litex/litex/litex/soc/software/liblitedram/utils.c
+      /opt/litex/litex/litex/soc/software/liblitedram/utils.c && \
+    : "picolibc's stdio float parser uses __clzdi2 (64-bit clz) which" \
+    : "the LiteX libcompiler_rt Makefile does NOT compile by default. Add it." && \
+    sed -i \
+      -e 's|clzsi2.o ctzsi2.o|clzsi2.o clzdi2.o ctzsi2.o|' \
+      /opt/litex/litex/litex/soc/software/libcompiler_rt/Makefile
+
+# ----- 4b. lwIP TCP/IP stack (vendored into the image) -----------------
+# We use lwIP for the firmware's network stack: it gives us TCP (so the
+# admin web UI is real HTTP, served from the device), IPv6 with MLD
+# (the §4.1 IPv6 multicast discovery requirement), and a clean raw API
+# for UDP that replaces libliteeth's single-slot ARP cache.
+ARG LWIP_VERSION=STABLE-2_2_0_RELEASE
+RUN curl -fsSL "https://github.com/lwip-tcpip/lwip/archive/refs/tags/${LWIP_VERSION}.tar.gz" \
+        -o /tmp/lwip.tgz \
+    && mkdir -p /opt/lwip \
+    && tar -xzf /tmp/lwip.tgz -C /opt/lwip --strip-components=1 \
+    && rm /tmp/lwip.tgz \
+    && ls /opt/lwip/src/include/lwip/ | head -5
 
 # ----- 5. Sanity check --------------------------------------------------
 RUN yosys -V && \

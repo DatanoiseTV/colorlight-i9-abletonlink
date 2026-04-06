@@ -41,5 +41,5 @@ void measurement_responder_handle_rx(const uint8_t *buf, size_t len,
     memcpy(p, buf + 9, ping_payload_len);
     p += ping_payload_len;
 
-    net_udp_send_to(src_addr, src_port, out, p - out);
+    net_udp_send_v4_unicast(src_addr, src_port, LINK_DISCOVERY_PORT, out, p - out);
 }

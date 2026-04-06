@@ -55,7 +55,8 @@ static void send_ping(void) {
     uint8_t buf[LINK_MAX_MSG_LINK];
     int64_t now = (int64_t)host_time_us();
     size_t n = encode_ping(buf, now, S.prev_ghost_time, S.pings_sent > 0);
-    net_udp_send_to(S.target_addr, S.target_port, buf, n);
+    net_udp_send_v4_unicast(S.target_addr, S.target_port,
+                         LINK_DISCOVERY_PORT, buf, n);
     S.prev_host_time = now;
     S.pings_sent++;
     S.next_send_us = host_time_us() + LINK_PING_INTERVAL_MS * 1000ULL;

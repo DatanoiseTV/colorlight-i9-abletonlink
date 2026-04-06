@@ -35,11 +35,12 @@ def main():
         description="LinkFPGA: Ableton Link in hardware on Colorlight i9 v7.2.",
     )
     parser.add_target_argument(
-        "--sys-clk-freq", default=60e6, type=float,
-        help="System clock frequency in Hz (default 60 MHz; the i9 v7.2 "
-             "ECP5 part closes timing comfortably at 60 MHz with this "
-             "design — pushing to 75 MHz currently fails by ~13 MHz on "
-             "the SDRAM path).")
+        "--sys-clk-freq", default=50e6, type=float,
+        help="System clock frequency in Hz (default 50 MHz). The current "
+             "design closes timing comfortably at 50 MHz with all custom "
+             "IP enabled (16-ch TDM serdes, beat pulse, ghost time, "
+             "VexRiscv standard+debug). Higher frequencies fail STA on "
+             "the SDRAM path.")
     parser.add_target_argument(
         "--num-tdm-ports", default=2, type=int,
         help="Total number of TDM16 ports (physical + virtual). Default 2.")
@@ -71,7 +72,15 @@ def main():
 
     builder = Builder(soc, **parser.builder_argdict)
 
-    # Wire our firmware in instead of the LiteX BIOS demo.
+    # Wire our firmware (lwIP + Link/Link-Audio + HTTP UI) in. The
+    # `add_software_package` call gets it compiled, and the matching
+    # `add_software_library` call adds it to the BIOS link line so
+    # `link_app_main` gets resolved (the BIOS main has been
+    # sed-patched to call it after `boot_sequence()`).
+    # Compile our firmware as a separate package (lwIP + Link +
+    # Link-Audio + HTTP). The Makefile produces a standalone ELF that
+    # links into main_ram (0x40000000). The user serialboots it via:
+    #   litex_term --kernel link_firmware.bin /dev/ttyUSB0
     fw_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "firmware")
     builder.add_software_package("link_firmware", src_dir=fw_dir)

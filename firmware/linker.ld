@@ -1,10 +1,12 @@
 /*
- * Linker script for the LinkFPGA firmware.
+ * Linker script for the LinkFPGA firmware ELF.
  *
- * Memory layout matches the LiteX SoC defaults: ROM is the integrated
- * BIOS slot at 0x00000000 and SRAM is the integrated scratch at
- * 0x10000000. The actual addresses are pulled from the auto-generated
- * `generated/regions.ld` so changes in soc.py propagate automatically.
+ * The firmware is a standalone executable that lives in `main_ram`
+ * (SDRAM, 32 MB at 0x40000000). The LiteX BIOS in BRAM serial-boots
+ * or spi-boots it into main_ram and jumps to the entry point.
+ *
+ * All sections (.text / .rodata / .data / .bss / heap / stack) live
+ * in main_ram. We don't touch the BIOS's BRAM ROM at all.
  */
 
 OUTPUT_FORMAT("elf32-littleriscv", "elf32-littleriscv", "elf32-littleriscv")
@@ -16,37 +18,48 @@ INCLUDE generated/regions.ld
 
 SECTIONS
 {
-    .text :
+    .text 0x40000000 :
     {
         _ftext = .;
         *(.text.start)
-        *(.text .text.* .gnu.linkonce.t.*)
+        KEEP(*(.text.isr))
+        *(.text .stub .text.* .gnu.linkonce.t.*)
         _etext = .;
-    } > rom
+    } > main_ram
 
     .rodata :
     {
-        . = ALIGN(4);
+        . = ALIGN(8);
         _frodata = .;
         *(.rodata .rodata.* .gnu.linkonce.r.*)
         *(.rodata1)
+        *(.got .got.*)
+        *(.toc .toc.*)
+        FILL(0);
+        . = ALIGN(8);
         _erodata = .;
-    } > rom
+    } > main_ram
 
     .data :
     {
-        . = ALIGN(4);
+        . = ALIGN(8);
         _fdata = .;
         *(.data .data.* .gnu.linkonce.d.*)
         *(.data1)
-        _gp = ALIGN(16);
+        /* `__global_pointer$` should sit in the middle of the small-
+         * data area so RISC-V's gp-relative addressing reaches both
+         * positive and negative offsets. */
+        . = ALIGN(8);
+        PROVIDE(__global_pointer$ = . + 0x800);
         *(.sdata .sdata.* .gnu.linkonce.s.*)
+        FILL(0);
+        . = ALIGN(8);
         _edata = .;
-    } > sram AT > rom
+    } > main_ram
 
     .bss :
     {
-        . = ALIGN(4);
+        . = ALIGN(8);
         _fbss = .;
         *(.dynsbss)
         *(.sbss .sbss.* .gnu.linkonce.sb.*)
@@ -54,8 +67,10 @@ SECTIONS
         *(.dynbss)
         *(.bss .bss.* .gnu.linkonce.b.*)
         *(COMMON)
+        . = ALIGN(8);
         _ebss = .;
-    } > sram
+        _end = .;
+    } > main_ram
 
     /DISCARD/ :
     {
@@ -64,4 +79,8 @@ SECTIONS
     }
 }
 
-PROVIDE(_fstack = ORIGIN(sram) + LENGTH(sram) - 4);
+/* Heap grows up from after .bss; stack grows down from the end of
+ * main_ram. Picolibc's sbrk uses _heap_start / _heap_end. */
+PROVIDE(__heap_start = _ebss);
+PROVIDE(__heap_end   = ORIGIN(main_ram) + LENGTH(main_ram) - 0x10000);
+PROVIDE(_fstack      = ORIGIN(main_ram) + LENGTH(main_ram) - 16);

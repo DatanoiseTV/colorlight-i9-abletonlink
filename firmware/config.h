@@ -27,6 +27,9 @@
 #define LINK_DISCOVERY_PRUNE_GRACE_MS 1000
 #define LINK_DISCOVERY_PORT         20808
 #define LINK_MCAST_V4               "224.76.78.75"
+/* 224.76.78.75 packed as host-order uint32 (matches libliteeth's IPTOINT) */
+#define LINK_MCAST_V4_ADDR          ((224u<<24)|(76u<<16)|(78u<<8)|75u)
+#define LINK_CONTROL_PORT           20809   /* UDP control protocol */
 
 #define LINK_MAX_PEERS              16
 #define LINK_MAX_CHANNELS           (LINK_NUM_TDM_PORTS * LINK_TDM_CHANNELS_PER_PORT)

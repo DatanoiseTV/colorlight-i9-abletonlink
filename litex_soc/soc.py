@@ -32,10 +32,19 @@ from litex.soc.integration.soc_core import SoCCore
 from liteeth.phy.ecp5rgmii import LiteEthPHYRGMII
 
 from .ghost_time import GhostTimeUnit
-from .link_filter import LinkPacketFilter
 from .beat_pulse import BeatPulseGen
 from .tdm import TDM16Core
 from .platform_i9 import MAX_PHYSICAL_TDM_PORTS
+
+# NOTE: LinkPacketFilter is intentionally not instantiated.
+# It would have been a sniffer on the LiteEth RX stream that
+# pre-classifies Link / Link-Audio packets via the 8-byte protocol
+# header. The wiring crosses from eth_rx (125 MHz) into sys without
+# CDC, which breaks the eth_rx timing closure.
+# The firmware does the same 8-byte match in <10 cycles per packet,
+# so the filter is a pure latency optimisation; we leave the Migen
+# module in litex_soc/link_filter.py for a future revision that wraps
+# it in an async FIFO and runs it inside the eth_rx clock domain.
 
 
 class _CRG(Module):
@@ -111,20 +120,51 @@ class LinkFPGASoC(SoCCore):
         self.num_virtual_tdm_ports  = num_tdm_ports - num_physical_tdm_ports
 
         # ----- core ----------------------------------------------------
+        # Standard LiteX architecture for big firmware on a small-BRAM
+        # board:
+        #   - BIOS lives in integrated ROM (BRAM-backed, ~64 KiB).
+        #     The BIOS only initialises SDRAM + Ethernet and waits at
+        #     a prompt for a serialboot/netboot/spiboot request.
+        #   - Our firmware (lwIP + Link + Link-Audio + http) is a
+        #     separate ELF that links into main_ram (SDRAM, 32 MB).
+        #     It's loaded by serialboot (dev) or spiboot (production).
+        #
+        # `MAIN_RAM_BOOT_ADDRESS` tells the BIOS to auto-jump to
+        # main_ram after the boot sequence completes successfully.
         SoCCore.__init__(self, platform,
             clk_freq             = sys_clk_freq,
             cpu_type             = "vexriscv",
-            cpu_variant          = "standard+debug",
+            cpu_variant          = "standard",
             ident                = "LinkFPGA / Ableton Link in hardware",
             ident_version        = True,
-            integrated_rom_size  = 0x10000,    # 64 KiB BIOS+early firmware
+            integrated_rom_size  = 0x10000,    # 64 KiB BIOS
             integrated_sram_size = 0x4000,     # 16 KiB scratch
             uart_name            = "serial",
         )
+        self.add_constant("MAIN_RAM_BOOT_ADDRESS", 0x40000000)
 
         self.submodules.crg = _CRG(platform, sys_clk_freq)
 
         # ----- SDRAM ---------------------------------------------------
+        # The Colorlight i9 v7.2 has a single 8 MB / 32-bit SDR SDRAM
+        # (M12L64322A or pin/timing-compatible EM638325-6H).
+        #
+        # Pinout cross-check against the wuxx documentation
+        # (https://github.com/wuxx/Colorlight-FPGA-Projects/blob/master/colorlight_i9_v7.2.md)
+        # vs the upstream `litex_boards.platforms.colorlight_i5` v7.2 IO list:
+        #
+        #   sdram_clock B9            ✓ matches wuxx
+        #   A0..A10  B13 C14 A16 A17 B16 B15 A14 A13 A12 A11 B12   ✓ matches wuxx
+        #   BA0/BA1  B11 / C8         ✓ matches wuxx
+        #   RAS_n/CAS_n/WE_n  B10/A9/A10  ✓ matches wuxx
+        #   CKE      tied to VCC      ✓ (not on the FPGA)
+        #   CS_n     tied to GND      ✓ (not on the FPGA)
+        #   DQM0..3  tied to GND      ✓ (not on the FPGA)
+        #   DQ0..31  same set of pins as wuxx, but the upstream file
+        #            uses a different bit-to-pin order. SDRAM
+        #            controllers don't care about DQ permutation — the
+        #            controller writes and reads through the same
+        #            mapping so software always sees consistent data.
         from litedram.modules import M12L64322A
         from litedram.phy import GENSDRPHY
         self.submodules.sdrphy = GENSDRPHY(platform.request("sdram"),
@@ -157,18 +197,6 @@ class LinkFPGASoC(SoCCore):
             # Second PHY is wired but unused by default — left here so a
             # future revision can stream audio + control on separate
             # subnets.
-
-        # ----- LinkPacketFilter ---------------------------------------
-        # Sits on the MAC RX path; tags packets that match one of the
-        # three Link protocol headers so firmware can fast-dispatch.
-        self.submodules.link_filter = LinkPacketFilter()
-        self.add_csr("link_filter")
-        self.comb += [
-            self.link_filter.sink.valid.eq(self.ethmac.interface.sink.valid),
-            self.link_filter.sink.last .eq(self.ethmac.interface.sink.last),
-            self.link_filter.sink.data .eq(self.ethmac.interface.sink.data),
-        ]
-        self.irq.add("link_filter", use_loc_if_exists=True)
 
         # ----- GhostTimeUnit ------------------------------------------
         self.submodules.ghost_time = GhostTimeUnit(sys_clk_freq=sys_clk_freq)

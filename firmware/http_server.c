@@ -1,201 +1,216 @@
 /*
- * Tiny HTTP/1.0 server.
+ * HTTP/1.0 server using lwIP raw TCP.
  *
- * Designed to sit on top of LiteEth's TCP socket layer. Each request is
- * parsed in one shot from a fixed-size buffer; pipelined / chunked /
- * keep-alive requests are not supported.
+ * Connection lifecycle:
+ *   accept() →
+ *      Accumulate received bytes into a per-connection request buffer
+ *      until either:
+ *        - we see "\r\n\r\n" with Content-Length=0, OR
+ *        - we have accumulated `Content-Length` bytes after "\r\n\r\n",
+ *          OR
+ *        - the buffer fills up.
+ *      Then dispatch to the matching route, write the response inline,
+ *      and close.
  *
- * Auth: HTTP Basic.
+ * No keep-alive, no chunked transfer, no TLS — just enough to serve
+ * a small admin UI from the device itself. Both GET and POST work;
+ * POST bodies up to a few KiB are supported (including across multiple
+ * TCP segments).
  */
 
-#include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "lwip/tcp.h"
+#include "lwip/err.h"
 
 #include "http_server.h"
-#include "config.h"
 
-/* Forward decls into LiteEth's TCP stack — see net.c notes about the
- * exact symbol names matching the generated LiteEth integration. */
-extern int  liteeth_tcp_listen(uint16_t port);
-extern int  liteeth_tcp_send(uint32_t client, const void *data, size_t len);
-extern void liteeth_tcp_close(uint32_t client);
-extern void liteeth_tcp_set_callback(
-                void (*cb)(uint32_t client, const void *data, size_t len));
+#define MAX_ROUTES   16
+#define REQ_BUF_MAX  4096
+#define HDR_BUF_MAX  256
 
 typedef struct {
-    http_method_t  method;
-    const char    *path;
-    http_handler_t fn;
+    char            method[8];
+    char            path[64];
+    http_handler_t  fn;
 } route_t;
 
-static route_t s_routes[HTTP_MAX_ROUTES];
+typedef struct {
+    char    buf[REQ_BUF_MAX];
+    size_t  used;
+    int     have_headers;
+    int     content_length;
+    size_t  body_offset;
+} conn_state_t;
+
+static route_t s_routes[MAX_ROUTES];
 static int     s_n_routes;
-static char    s_auth[64];          /* "user:pass" or "" */
-static char    s_auth_b64[128];     /* "Basic <base64>" */
 
-/* ---- minimal base64 encoder ---- */
-static const char b64tab[] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+void http_route(const char *method, const char *path, http_handler_t fn) {
+    if (s_n_routes >= MAX_ROUTES) return;
+    route_t *r = &s_routes[s_n_routes++];
+    strncpy(r->method, method, sizeof(r->method) - 1);
+    r->method[sizeof(r->method) - 1] = 0;
+    strncpy(r->path, path, sizeof(r->path) - 1);
+    r->path[sizeof(r->path) - 1] = 0;
+    r->fn = fn;
+}
 
-static size_t b64enc(const char *in, size_t inlen, char *out) {
-    size_t i = 0, j = 0;
-    while (i + 3 <= inlen) {
-        uint32_t v = ((uint32_t)(uint8_t)in[i] << 16) |
-                     ((uint32_t)(uint8_t)in[i+1] << 8) |
-                                (uint8_t)in[i+2];
-        out[j++] = b64tab[(v >> 18) & 0x3f];
-        out[j++] = b64tab[(v >> 12) & 0x3f];
-        out[j++] = b64tab[(v >>  6) & 0x3f];
-        out[j++] = b64tab[ v        & 0x3f];
-        i += 3;
+static const char *reason(int status) {
+    switch (status) {
+    case 200: return "OK";
+    case 400: return "Bad Request";
+    case 404: return "Not Found";
+    case 413: return "Payload Too Large";
+    case 500: return "Internal Server Error";
+    default:  return "Error";
     }
-    if (i < inlen) {
-        uint32_t v = (uint32_t)(uint8_t)in[i] << 16;
-        if (i + 1 < inlen) v |= (uint32_t)(uint8_t)in[i+1] << 8;
-        out[j++] = b64tab[(v >> 18) & 0x3f];
-        out[j++] = b64tab[(v >> 12) & 0x3f];
-        out[j++] = (i + 1 < inlen) ? b64tab[(v >> 6) & 0x3f] : '=';
-        out[j++] = '=';
+}
+
+static void send_response(struct tcp_pcb *pcb, const http_response_t *resp) {
+    char hdr[HDR_BUF_MAX];
+    int hlen = snprintf(hdr, sizeof(hdr),
+        "HTTP/1.0 %d %s\r\n"
+        "Server: LinkFPGA\r\n"
+        "Content-Type: %s\r\n"
+        "Content-Length: %u\r\n"
+        "Connection: close\r\n"
+        "Access-Control-Allow-Origin: *\r\n"
+        "\r\n",
+        resp->status, reason(resp->status),
+        resp->content_type ? resp->content_type : "text/plain",
+        (unsigned)resp->body_len);
+
+    tcp_write(pcb, hdr, hlen, TCP_WRITE_FLAG_COPY);
+    if (resp->body_len)
+        tcp_write(pcb, resp->body, resp->body_len, TCP_WRITE_FLAG_COPY);
+    tcp_output(pcb);
+}
+
+static void parse_headers(conn_state_t *cs) {
+    cs->buf[cs->used] = 0;
+    char *eol = strstr(cs->buf, "\r\n\r\n");
+    if (!eol) return;
+    cs->have_headers = 1;
+    cs->body_offset  = (eol - cs->buf) + 4;
+
+    /* Find Content-Length, case-insensitive (lwip's clients send
+     * "Content-Length"). Hand-rolled to avoid bringing in strcasestr. */
+    cs->content_length = 0;
+    for (char *p = cs->buf; p < eol; p++) {
+        if ((*p == 'C' || *p == 'c') &&
+            strncmp(p, "Content-Length", 14) == 0 || strncmp(p, "content-length", 14) == 0) {
+            char *colon = strchr(p, ':');
+            if (colon && colon < eol) {
+                cs->content_length = atoi(colon + 1);
+            }
+            break;
+        }
     }
-    out[j] = 0;
-    return j;
+}
+
+static int request_complete(const conn_state_t *cs) {
+    if (!cs->have_headers) return 0;
+    if (cs->content_length == 0) return 1;
+    return cs->used >= cs->body_offset + (size_t)cs->content_length;
+}
+
+static void dispatch(struct tcp_pcb *pcb, conn_state_t *cs) {
+    /* Parse request line */
+    char method[8] = {0};
+    char path[64]  = {0};
+    int  off = 0;
+    while (cs->buf[off] && cs->buf[off] != ' ' && off < 7) {
+        method[off] = cs->buf[off]; off++;
+    }
+    method[off] = 0;
+    if (cs->buf[off] != ' ') {
+        http_response_t resp = { 400, "text/plain",
+                                 (const uint8_t *)"bad", 3 };
+        send_response(pcb, &resp);
+        return;
+    }
+    off++;
+    int p1 = 0;
+    while (cs->buf[off] && cs->buf[off] != ' ' && p1 < 63) {
+        path[p1++] = cs->buf[off++];
+    }
+    path[p1] = 0;
+
+    const char *body = cs->buf + cs->body_offset;
+    size_t body_len  = cs->content_length;
+
+    http_response_t resp = { 404, "text/plain",
+                             (const uint8_t *)"not found", 9 };
+    for (int i = 0; i < s_n_routes; i++) {
+        if (strcmp(s_routes[i].method, method) == 0 &&
+            strcmp(s_routes[i].path,   path)   == 0) {
+            resp.status   = 200;
+            resp.content_type = "text/plain";
+            resp.body     = (const uint8_t *)"";
+            resp.body_len = 0;
+            s_routes[i].fn(path, body, body_len, &resp);
+            break;
+        }
+    }
+    send_response(pcb, &resp);
+}
+
+static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p,
+                     err_t err) {
+    conn_state_t *cs = (conn_state_t *)arg;
+    if (err != ERR_OK || p == NULL) {
+        if (p) pbuf_free(p);
+        if (cs) free(cs);
+        tcp_arg(pcb, NULL);
+        tcp_close(pcb);
+        return ERR_OK;
+    }
+
+    if (cs->used + p->tot_len > REQ_BUF_MAX) {
+        http_response_t resp = { 413, "text/plain",
+                                 (const uint8_t *)"too large", 9 };
+        send_response(pcb, &resp);
+        pbuf_free(p);
+        free(cs);
+        tcp_arg(pcb, NULL);
+        tcp_close(pcb);
+        return ERR_OK;
+    }
+
+    pbuf_copy_partial(p, cs->buf + cs->used, p->tot_len, 0);
+    cs->used += p->tot_len;
+    tcp_recved(pcb, p->tot_len);
+    pbuf_free(p);
+
+    if (!cs->have_headers) parse_headers(cs);
+    if (!request_complete(cs)) return ERR_OK;       /* keep accumulating */
+
+    dispatch(pcb, cs);
+    free(cs);
+    tcp_arg(pcb, NULL);
+    tcp_close(pcb);
+    return ERR_OK;
+}
+
+static err_t on_accept(void *arg, struct tcp_pcb *newpcb, err_t err) {
+    (void)arg;
+    if (err != ERR_OK || newpcb == NULL) return ERR_VAL;
+    conn_state_t *cs = (conn_state_t *)calloc(1, sizeof(*cs));
+    if (!cs) return ERR_MEM;
+    tcp_setprio(newpcb, TCP_PRIO_MIN);
+    tcp_arg(newpcb, cs);
+    tcp_recv(newpcb, on_recv);
+    return ERR_OK;
 }
 
 void http_init(uint16_t port) {
     s_n_routes = 0;
-    s_auth[0] = 0;
-    s_auth_b64[0] = 0;
-    liteeth_tcp_listen(port);
-    extern void http_handle_segment(uint32_t, uint16_t, const uint8_t *, size_t);
-    /* Wire LiteEth callback to our segment handler */
-    liteeth_tcp_set_callback((void(*)(uint32_t, const void*, size_t))
-                             http_handle_segment);
-}
-
-void http_set_auth(const char *user, const char *pass) {
-    if (!user || !pass) { s_auth[0] = 0; s_auth_b64[0] = 0; return; }
-    int n = snprintf(s_auth, sizeof(s_auth), "%s:%s", user, pass);
-    if (n <= 0) return;
-    char tmp[96];
-    size_t len = b64enc(s_auth, n, tmp);
-    snprintf(s_auth_b64, sizeof(s_auth_b64), "Basic %.*s", (int)len, tmp);
-}
-
-void http_route(http_method_t method, const char *path, http_handler_t fn) {
-    if (s_n_routes >= HTTP_MAX_ROUTES) return;
-    s_routes[s_n_routes++] = (route_t){ method, path, fn };
-}
-
-/* ---- request parser + dispatcher ---- */
-
-static int parse_method(const char *s, size_t n, http_method_t *out) {
-    if (n >= 4 && memcmp(s, "GET ",  4) == 0) { *out = HTTP_GET;  return 4; }
-    if (n >= 5 && memcmp(s, "POST ", 5) == 0) { *out = HTTP_POST; return 5; }
-    return 0;
-}
-
-static int auth_ok(const char *headers, size_t n) {
-    if (s_auth_b64[0] == 0) return 1;     /* auth disabled */
-    /* Look for "Authorization: <s_auth_b64>" */
-    const char *needle = "Authorization:";
-    const char *pos = NULL;
-    for (size_t i = 0; i + 14 < n; i++) {
-        if (memcmp(headers + i, needle, 14) == 0) { pos = headers + i; break; }
-    }
-    if (!pos) return 0;
-    pos += 14;
-    while (*pos == ' ' || *pos == '\t') pos++;
-    return strncmp(pos, s_auth_b64, strlen(s_auth_b64)) == 0;
-}
-
-static void send_status(uint32_t client, int status, const char *reason,
-                        const char *extra_headers,
-                        const char *content_type,
-                        const void *body, size_t body_len) {
-    char hdr[256];
-    int n = snprintf(hdr, sizeof(hdr),
-        "HTTP/1.0 %d %s\r\n"
-        "Server: LinkFPGA\r\n"
-        "%s"
-        "Content-Type: %s\r\n"
-        "Content-Length: %u\r\n"
-        "Connection: close\r\n"
-        "\r\n",
-        status, reason,
-        extra_headers ? extra_headers : "",
-        content_type ? content_type : "text/plain",
-        (unsigned)body_len);
-    if (n > 0) liteeth_tcp_send(client, hdr, n);
-    if (body_len > 0) liteeth_tcp_send(client, body, body_len);
-    liteeth_tcp_close(client);
-}
-
-void http_handle_segment(uint32_t client, uint16_t src_port,
-                         const uint8_t *buf, size_t len) {
-    (void)src_port;
-    if (len < 16) return;     /* not a complete request line */
-
-    http_method_t method;
-    int off = parse_method((const char *)buf, len, &method);
-    if (!off) {
-        send_status(client, 400, "Bad Request", NULL, "text/plain", "bad", 3);
-        return;
-    }
-
-    /* Path is from `off` until next space. */
-    const char *path = (const char *)buf + off;
-    size_t      maxp = len - off;
-    size_t      pathlen = 0;
-    while (pathlen < maxp && path[pathlen] != ' ' && path[pathlen] != '\r')
-        pathlen++;
-    char pathbuf[128];
-    if (pathlen >= sizeof(pathbuf)) pathlen = sizeof(pathbuf) - 1;
-    memcpy(pathbuf, path, pathlen);
-    pathbuf[pathlen] = 0;
-
-    /* Headers begin after CRLF */
-    const char *body = NULL;
-    size_t body_len = 0;
-    const char *p = (const char *)buf;
-    const char *end = p + len;
-    while (p + 4 <= end) {
-        if (memcmp(p, "\r\n\r\n", 4) == 0) {
-            body = p + 4;
-            body_len = end - body;
-            break;
-        }
-        p++;
-    }
-
-    if (!auth_ok((const char *)buf, len)) {
-        send_status(client, 401, "Unauthorized",
-                    "WWW-Authenticate: Basic realm=\"LinkFPGA\"\r\n",
-                    "text/plain", "auth", 4);
-        return;
-    }
-
-    for (int i = 0; i < s_n_routes; i++) {
-        route_t *r = &s_routes[i];
-        if (r->method == method && strcmp(r->path, pathbuf) == 0) {
-            http_request_t req = {
-                .method = method,
-                .path   = pathbuf,
-                .body   = body ? body : "",
-                .body_len = body_len,
-            };
-            http_response_t resp = { 200, "text/plain", (const uint8_t *)"", 0 };
-            r->fn(&req, &resp);
-            send_status(client, resp.status,
-                        (resp.status == 200 ? "OK" : "Error"),
-                        NULL,
-                        resp.content_type, resp.body, resp.body_len);
-            return;
-        }
-    }
-
-    send_status(client, 404, "Not Found", NULL, "text/plain", "404", 3);
-}
-
-void http_tick(void) {
-    /* Pull-mode tick is unused; LiteEth's TCP callback drives us. */
+    struct tcp_pcb *pcb = tcp_new_ip_type(IPADDR_TYPE_ANY);
+    if (!pcb) return;
+    tcp_bind(pcb, IP_ANY_TYPE, port);
+    pcb = tcp_listen(pcb);
+    tcp_accept(pcb, on_accept);
 }

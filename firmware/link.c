@@ -102,13 +102,28 @@ static size_t encode_msg(uint8_t *buf, uint8_t mtype, int with_state) {
     put_be32(p, net_local_ipv4()); p += 4;
     put_be16(p, LINK_DISCOVERY_PORT); p += 2;
 
+    /* mep6 — IPv6 measurement endpoint, link-local. */
+    {
+        const uint8_t *v6 = net_local_ipv6_bytes();
+        tlv_emit_header(&p, KEY_MEP6, 18);
+        memcpy(p, v6, 16); p += 16;
+        put_be16(p, LINK_DISCOVERY_PORT); p += 2;
+    }
+
 #if LINK_NUM_TDM_PORTS > 0
-    /* aep4 — we always advertise an audio endpoint on the same port,
-     * the audio dispatcher in link_audio.c discriminates by message
-     * type. */
+    /* aep4 — audio endpoint on the same port; discriminated from
+     * discovery traffic by the protocol header magic. */
     tlv_emit_header(&p, KEY_AEP4, 6);
     put_be32(p, net_local_ipv4()); p += 4;
     put_be16(p, LINK_DISCOVERY_PORT); p += 2;
+
+    /* aep6 — same, IPv6. */
+    {
+        const uint8_t *v6 = net_local_ipv6_bytes();
+        tlv_emit_header(&p, KEY_AEP6, 18);
+        memcpy(p, v6, 16); p += 16;
+        put_be16(p, LINK_DISCOVERY_PORT); p += 2;
+    }
 #endif
 
     return p - buf;
@@ -117,7 +132,10 @@ static size_t encode_msg(uint8_t *buf, uint8_t mtype, int with_state) {
 static void send_alive(void) {
     uint8_t buf[LINK_MAX_MSG_DISCOVERY];
     size_t  n = encode_msg(buf, /*ALIVE=*/1, 1);
-    net_udp_send_mcast(LINK_DISCOVERY_PORT, buf, n);
+    net_udp_send_v4_mcast(LINK_DISCOVERY_PORT,
+                          LINK_DISCOVERY_PORT, buf, n);
+    net_udp_send_v6_mcast(LINK_DISCOVERY_PORT,
+                          LINK_DISCOVERY_PORT, buf, n);
     s_last_bcast_us = host_time_us();
     s_next_bcast_us = s_last_bcast_us + LINK_DISCOVERY_BCAST_MS * 1000ULL;
     s_state_dirty = 0;
@@ -126,7 +144,7 @@ static void send_alive(void) {
 static void send_response(uint32_t to_addr, uint16_t to_port) {
     uint8_t buf[LINK_MAX_MSG_DISCOVERY];
     size_t  n = encode_msg(buf, /*RESPONSE=*/2, 1);
-    net_udp_send_to(to_addr, to_port, buf, n);
+    net_udp_send_v4_unicast(to_addr, to_port, LINK_DISCOVERY_PORT, buf, n);
 }
 
 void link_send_byebye(void) {
@@ -137,7 +155,10 @@ void link_send_byebye(void) {
     *p++ = 0;          /* ttl=0 */
     *p++ = 0; *p++ = 0;
     memcpy(p, link_self_id.bytes, 8); p += 8;
-    net_udp_send_mcast(LINK_DISCOVERY_PORT, buf, p - buf);
+    net_udp_send_v4_mcast(LINK_DISCOVERY_PORT,
+                          LINK_DISCOVERY_PORT, buf, p - buf);
+    net_udp_send_v6_mcast(LINK_DISCOVERY_PORT,
+                          LINK_DISCOVERY_PORT, buf, p - buf);
 }
 
 void link_broadcast_alive_now(void) {
@@ -182,6 +203,18 @@ static int handle_entry(uint32_t key, const uint8_t *v, uint32_t n, void *ctx_) 
         if (n != 6) return -1;
         p->aep4_addr = be32(v);
         p->aep4_port = be16(v + 4);
+        break;
+    case KEY_MEP6:
+        if (n != 18) return -1;
+        memcpy(p->mep6_addr, v, 16);
+        p->mep6_port = be16(v + 16);
+        p->have_mep6 = 1;
+        break;
+    case KEY_AEP6:
+        if (n != 18) return -1;
+        memcpy(p->aep6_addr, v, 16);
+        p->aep6_port = be16(v + 16);
+        p->have_aep6 = 1;
         break;
     default: /* unknown — silently skip per spec §3.7 */
         break;
