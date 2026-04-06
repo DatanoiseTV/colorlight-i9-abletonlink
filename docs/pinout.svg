@@ -1,0 +1,300 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 1100"
+     font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+
+  <!-- ========= styles ========= -->
+  <style>
+    .bg          { fill: #0b0e14; }
+    .board       { fill: #161c27; stroke: #2a3346; stroke-width: 2; }
+    .chip        { fill: #0b0e14; stroke: #2a3346; stroke-width: 1.2; }
+    .chip-label  { font-size: 13px; fill: #7fd1ff; }
+    .chip-sub    { font-size: 10px; fill: #6b7993; }
+
+    .title       { font-size: 22px; fill: #ffae57; font-weight: 700; }
+    .subtitle    { font-size: 12px; fill: #6b7993; }
+    .conn-title  { font-size: 14px; fill: #d0d6e1; font-weight: 600; }
+    .conn-sub    { font-size: 10px; fill: #6b7993; }
+
+    .pin-fpga    { font-size: 10px; }
+    .pin-func    { font-size: 10px; }
+
+    /* default (free) pin */
+    .pin-cell rect          { fill: #1f2839; stroke: #2a3346; stroke-width: 0.5; }
+    .pin-cell .pin-fpga     { fill: #6b7993; }
+    .pin-cell .pin-func     { fill: #4a5566; }
+
+    /* reserved (do not use — collides with on-board function) */
+    .pin-cell.reserved rect       { fill: #2a1620; stroke: #ff6b6b; stroke-width: 1.2; }
+    .pin-cell.reserved .pin-fpga  { fill: #ff8585; }
+    .pin-cell.reserved .pin-func  { fill: #ff6b6b; }
+
+    /* TDM port 0 */
+    .pin-cell.tdm0 rect           { fill: #ffae57; }
+    .pin-cell.tdm0 .pin-fpga,
+    .pin-cell.tdm0 .pin-func      { fill: #0b0e14; }
+
+    /* TDM port 1 */
+    .pin-cell.tdm1 rect           { fill: #ffd28a; }
+    .pin-cell.tdm1 .pin-fpga,
+    .pin-cell.tdm1 .pin-func      { fill: #0b0e14; }
+
+    /* MIDI */
+    .pin-cell.midi rect           { fill: #5fdc7e; }
+    .pin-cell.midi .pin-fpga,
+    .pin-cell.midi .pin-func      { fill: #0b0e14; }
+
+    /* Eurorack */
+    .pin-cell.euro rect           { fill: #7fd1ff; }
+    .pin-cell.euro .pin-fpga,
+    .pin-cell.euro .pin-func      { fill: #0b0e14; }
+
+    /* Beat / transport pulses */
+    .pin-cell.pulse rect          { fill: #ff6bb5; }
+    .pin-cell.pulse .pin-fpga,
+    .pin-cell.pulse .pin-func     { fill: #0b0e14; }
+
+    /* legend swatch */
+    .swatch text { font-size: 11px; fill: #d0d6e1; }
+  </style>
+
+  <!-- ========= background ========= -->
+  <rect class="bg" width="1320" height="1100"/>
+
+  <!-- ========= title ========= -->
+  <text class="title"   x="660"  y="40" text-anchor="middle">LinkFPGA — Colorlight i9 v7.2 pinout</text>
+  <text class="subtitle" x="660" y="64" text-anchor="middle">
+    default build (--num-physical-tdm-ports 2). Coloured pins are wired to LinkFPGA functions; grey pins are free GPIO.
+  </text>
+
+  <!-- ========= board outline ========= -->
+  <rect class="board" x="320" y="320" width="680" height="430" rx="10"/>
+
+  <!-- ECP5 die marker -->
+  <rect class="chip" x="540" y="430" width="240" height="200" rx="6"/>
+  <text class="chip-label" x="660" y="510" text-anchor="middle">Lattice ECP5</text>
+  <text class="chip-label" x="660" y="528" text-anchor="middle">LFE5U-45F</text>
+  <text class="chip-sub"   x="660" y="545" text-anchor="middle">-6BG381C</text>
+  <text class="chip-sub"   x="660" y="572" text-anchor="middle">VexRiscv + lwIP</text>
+  <text class="chip-sub"   x="660" y="588" text-anchor="middle">+ Link / Link-Audio</text>
+  <text class="chip-sub"   x="660" y="604" text-anchor="middle">+ MidiCore + EurorackInput</text>
+
+  <!-- ETH PHY 0 marker -->
+  <rect class="chip" x="345" y="350" width="100" height="46" rx="3"/>
+  <text class="chip-label" x="395" y="372" text-anchor="middle">ETH PHY 0</text>
+  <text class="chip-sub"   x="395" y="388" text-anchor="middle">B50612D · used</text>
+
+  <!-- ETH PHY 1 marker -->
+  <rect class="chip" x="345" y="408" width="100" height="46" rx="3"/>
+  <text class="chip-label" x="395" y="430" text-anchor="middle">ETH PHY 1</text>
+  <text class="chip-sub"   x="395" y="446" text-anchor="middle">B50612D · idle</text>
+
+  <!-- SDRAM marker -->
+  <rect class="chip" x="875" y="350" width="100" height="46" rx="3"/>
+  <text class="chip-label" x="925" y="372" text-anchor="middle">SDRAM 8 MB</text>
+  <text class="chip-sub"   x="925" y="388" text-anchor="middle">M12L64322A</text>
+
+  <!-- SPI flash marker -->
+  <rect class="chip" x="875" y="408" width="100" height="46" rx="3"/>
+  <text class="chip-label" x="925" y="430" text-anchor="middle">SPI flash</text>
+  <text class="chip-sub"   x="925" y="446" text-anchor="middle">W25Q · 16 Mbit</text>
+
+  <!-- Reset / LED markers (bottom of board) -->
+  <rect class="chip" x="345" y="685" width="100" height="46" rx="3"/>
+  <text class="chip-label" x="395" y="707" text-anchor="middle">cpu_reset</text>
+  <text class="chip-sub"   x="395" y="723" text-anchor="middle">K18 · pulled-up</text>
+
+  <rect class="chip" x="475" y="685" width="100" height="46" rx="3"/>
+  <text class="chip-label" x="525" y="707" text-anchor="middle">USER LED</text>
+  <text class="chip-sub"   x="525" y="723" text-anchor="middle">L2 · active-low</text>
+
+  <rect class="chip" x="605" y="685" width="100" height="46" rx="3"/>
+  <text class="chip-label" x="655" y="707" text-anchor="middle">25 MHz xtal</text>
+  <text class="chip-sub"   x="655" y="723" text-anchor="middle">P3 → both PLLs</text>
+
+  <rect class="chip" x="735" y="685" width="100" height="46" rx="3"/>
+  <text class="chip-label" x="785" y="707" text-anchor="middle">UART console</text>
+  <text class="chip-sub"   x="785" y="723" text-anchor="middle">J17/H18 · 115200</text>
+
+  <rect class="chip" x="875" y="685" width="100" height="46" rx="3"/>
+  <text class="chip-label" x="925" y="707" text-anchor="middle">JTAG header</text>
+  <text class="chip-sub"   x="925" y="723" text-anchor="middle">TCK TMS TDI TDO</text>
+
+  <!-- ========= P3 connector card (TOP) ========= -->
+  <text class="conn-title" x="660" y="100" text-anchor="middle">P3 — pmode (TDM port 0) + pmodf (TDM port 1)</text>
+  <text class="conn-sub"   x="660" y="116" text-anchor="middle">top edge of the board</text>
+
+  <!-- pmode (TDM 0) row -->
+  <g transform="translate(330,130)">
+    <text class="conn-sub" x="0" y="-2">pmode  →  TDM port 0</text>
+    <g class="pin-cell tdm0" transform="translate(  0,8)"><rect width="80" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">C17</text><text class="pin-func" x="32" y="15">BCK</text></g>
+    <g class="pin-cell tdm0" transform="translate( 84,8)"><rect width="80" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">B18</text><text class="pin-func" x="32" y="15">FS</text></g>
+    <g class="pin-cell tdm0" transform="translate(168,8)"><rect width="80" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">B20</text><text class="pin-func" x="32" y="15">SDOUT</text></g>
+    <g class="pin-cell tdm0" transform="translate(252,8)"><rect width="80" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">F20</text><text class="pin-func" x="32" y="15">SDIN</text></g>
+    <g class="pin-cell tdm0" transform="translate(336,8)"><rect width="80" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">A18</text><text class="pin-func" x="32" y="15">MCLK</text></g>
+    <g class="pin-cell"      transform="translate(420,8)"><rect width="80" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">A19</text><text class="pin-func" x="32" y="15">free</text></g>
+    <g class="pin-cell"      transform="translate(504,8)"><rect width="80" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">B19</text><text class="pin-func" x="32" y="15">free</text></g>
+    <g class="pin-cell"      transform="translate(588,8)"><rect width="80" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">D20</text><text class="pin-func" x="32" y="15">free</text></g>
+  </g>
+
+  <!-- pmodf (TDM 1) row -->
+  <g transform="translate(330,176)">
+    <text class="conn-sub" x="0" y="-2">pmodf  →  TDM port 1</text>
+    <g class="pin-cell tdm1" transform="translate(  0,8)"><rect width="80" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">D1</text><text class="pin-func" x="32" y="15">BCK</text></g>
+    <g class="pin-cell tdm1" transform="translate( 84,8)"><rect width="80" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">C1</text><text class="pin-func" x="32" y="15">FS</text></g>
+    <g class="pin-cell tdm1" transform="translate(168,8)"><rect width="80" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">C2</text><text class="pin-func" x="32" y="15">SDOUT</text></g>
+    <g class="pin-cell tdm1" transform="translate(252,8)"><rect width="80" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">E3</text><text class="pin-func" x="32" y="15">SDIN</text></g>
+    <g class="pin-cell tdm1" transform="translate(336,8)"><rect width="80" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">E2</text><text class="pin-func" x="32" y="15">MCLK</text></g>
+    <g class="pin-cell"      transform="translate(420,8)"><rect width="80" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">D2</text><text class="pin-func" x="32" y="15">free</text></g>
+    <g class="pin-cell"      transform="translate(504,8)"><rect width="80" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">B1</text><text class="pin-func" x="32" y="15">free</text></g>
+    <g class="pin-cell"      transform="translate(588,8)"><rect width="80" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">A3</text><text class="pin-func" x="32" y="15">free</text></g>
+  </g>
+
+  <!-- ========= P2 connector card (TOP RIGHT) ========= -->
+  <text class="conn-title" x="1160" y="100" text-anchor="middle">P2 — pmodc (MIDI + Eurorack) + pmodd</text>
+  <text class="conn-sub"   x="1160" y="116" text-anchor="middle">utility I/O</text>
+
+  <g transform="translate(1020,140)">
+    <text class="conn-sub" x="0"  y="0">pmodc  →  MIDI / Eurorack</text>
+    <g class="pin-cell midi"     transform="translate( 0, 10)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">P17</text><text class="pin-func" x="36" y="15">MIDI TX</text></g>
+    <g class="pin-cell midi"     transform="translate( 0, 36)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">R18</text><text class="pin-func" x="36" y="15">MIDI RX</text></g>
+    <g class="pin-cell euro"     transform="translate( 0, 62)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">C18</text><text class="pin-func" x="36" y="15">EURO CLK</text></g>
+    <g class="pin-cell reserved" transform="translate( 0, 88)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">L2</text> <text class="pin-func" x="36" y="15">USER LED</text></g>
+    <g class="pin-cell euro"     transform="translate( 0,114)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">M17</text><text class="pin-func" x="36" y="15">EURO RST</text></g>
+    <g class="pin-cell euro"     transform="translate( 0,140)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">R17</text><text class="pin-func" x="36" y="15">EURO RUN</text></g>
+    <g class="pin-cell"          transform="translate( 0,166)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">T18</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell reserved" transform="translate( 0,192)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">K18</text><text class="pin-func" x="36" y="15">cpu_reset</text></g>
+
+    <text class="conn-sub" x="150" y="0">pmodd  →  free</text>
+    <g class="pin-cell" transform="translate(150, 10)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">J20</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate(150, 36)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">L18</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate(150, 62)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">M18</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate(150, 88)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">N17</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate(150,114)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">G20</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate(150,140)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">K20</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate(150,166)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">L20</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate(150,192)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">N18</text><text class="pin-func" x="36" y="15">free</text></g>
+  </g>
+
+  <!-- ========= P4 connector card (LEFT) ========= -->
+  <text class="conn-title" x="160" y="370" text-anchor="middle">P4 — pmodg + pmodh (beat / transport)</text>
+
+  <g transform="translate(20,400)">
+    <text class="conn-sub" x="0"  y="0">pmodg  →  free</text>
+    <g class="pin-cell" transform="translate( 0, 10)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">H4</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate( 0, 36)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">G3</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate( 0, 62)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">F1</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate( 0, 88)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">F2</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate( 0,114)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">H3</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate( 0,140)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">F3</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate( 0,166)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">E4</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate( 0,192)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">E1</text><text class="pin-func" x="36" y="15">free</text></g>
+
+    <text class="conn-sub" x="150" y="0">pmodh  →  beat / transport</text>
+    <g class="pin-cell"       transform="translate(150, 10)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">—</text>  <text class="pin-func" x="36" y="15">VCC/GND</text></g>
+    <g class="pin-cell pulse" transform="translate(150, 36)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">E19</text><text class="pin-func" x="36" y="15">CLK 24PPQN</text></g>
+    <g class="pin-cell pulse" transform="translate(150, 62)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">B3</text> <text class="pin-func" x="36" y="15">START</text></g>
+    <g class="pin-cell pulse" transform="translate(150, 88)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">K5</text> <text class="pin-func" x="36" y="15">STOP</text></g>
+    <g class="pin-cell"       transform="translate(150,114)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">—</text>  <text class="pin-func" x="36" y="15">VCC/GND</text></g>
+    <g class="pin-cell pulse" transform="translate(150,140)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">B2</text> <text class="pin-func" x="36" y="15">BEAT CLK</text></g>
+    <g class="pin-cell pulse" transform="translate(150,166)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">K4</text> <text class="pin-func" x="36" y="15">RUN LVL</text></g>
+    <g class="pin-cell pulse" transform="translate(150,192)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">A2</text> <text class="pin-func" x="36" y="15">SYNC LED</text></g>
+  </g>
+
+  <!-- ========= P1 connector card (RIGHT — ETH) ========= -->
+  <text class="conn-title" x="1160" y="450" text-anchor="middle">P1 — dual GbE PHY differential pairs</text>
+
+  <g transform="translate(1040,470)">
+    <g class="pin-cell" transform="translate(  0, 10)"><rect width="120" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">U19/L19</text><text class="pin-func" x="56" y="15">PHY0 clk</text></g>
+    <g class="pin-cell" transform="translate(  0, 36)"><rect width="120" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">U20…R20</text><text class="pin-func" x="56" y="15">PHY0 TX</text></g>
+    <g class="pin-cell" transform="translate(  0, 62)"><rect width="120" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">P20…M19</text><text class="pin-func" x="56" y="15">PHY0 RX</text></g>
+    <g class="pin-cell" transform="translate(  0, 88)"><rect width="120" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">M20</text>    <text class="pin-func" x="56" y="15">PHY0 RX_DV</text></g>
+    <g class="pin-cell" transform="translate(  0,114)"><rect width="120" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">P19</text>    <text class="pin-func" x="56" y="15">PHY0 TX_EN</text></g>
+    <g class="pin-cell" transform="translate(  0,140)"><rect width="120" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">N5/P5</text>  <text class="pin-func" x="56" y="15">MDC/MDIO</text></g>
+    <g class="pin-cell" transform="translate(  0,166)"><rect width="120" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">P4</text>     <text class="pin-func" x="56" y="15">PHY rst</text></g>
+    <g class="pin-cell" transform="translate(  0,192)"><rect width="120" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">G1/H2</text>  <text class="pin-func" x="56" y="15">PHY1 idle</text></g>
+  </g>
+
+  <!-- ========= P5 connector card (BOTTOM LEFT) ========= -->
+  <text class="conn-title" x="160" y="800" text-anchor="middle">P5 — pmodi + pmodj</text>
+
+  <g transform="translate(20,820)">
+    <text class="conn-sub" x="0"  y="0">pmodi  →  free</text>
+    <g class="pin-cell" transform="translate( 0, 10)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">D18</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate( 0, 36)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">G5</text> <text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate( 0, 62)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">F5</text> <text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate( 0, 88)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6"  y="15">E5</text> <text class="pin-func" x="36" y="15">free</text></g>
+
+    <text class="conn-sub" x="150" y="0">pmodj  →  free (avoid j[0] / j[4])</text>
+    <g class="pin-cell reserved" transform="translate(150, 10)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">J17</text><text class="pin-func" x="36" y="15">UART TX</text></g>
+    <g class="pin-cell"          transform="translate(150, 36)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">H17</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell"          transform="translate(150, 62)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">H16</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell"          transform="translate(150, 88)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">G16</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell reserved" transform="translate(150,114)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">H18</text><text class="pin-func" x="36" y="15">UART RX</text></g>
+    <g class="pin-cell"          transform="translate(150,140)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">G18</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell"          transform="translate(150,166)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">F18</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell"          transform="translate(150,192)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">E18</text><text class="pin-func" x="36" y="15">free</text></g>
+  </g>
+
+  <!-- ========= P6 connector card (BOTTOM RIGHT) ========= -->
+  <text class="conn-title" x="1160" y="800" text-anchor="middle">P6 — pmodk + pmodl</text>
+
+  <g transform="translate(1020,820)">
+    <text class="conn-sub" x="0"  y="0">pmodk  →  free</text>
+    <g class="pin-cell" transform="translate( 0, 10)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">R3</text> <text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate( 0, 36)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">M4</text> <text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate( 0, 62)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">L5</text> <text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate( 0, 88)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">J16</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate( 0,114)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">N4</text> <text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate( 0,140)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">L4</text> <text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate( 0,166)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">P16</text><text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate( 0,192)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">J18</text><text class="pin-func" x="36" y="15">free</text></g>
+
+    <text class="conn-sub" x="150" y="0">pmodl  →  free</text>
+    <g class="pin-cell" transform="translate(150, 10)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">R1</text> <text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate(150, 36)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">U1</text> <text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate(150, 62)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">W1</text> <text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate(150, 88)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">M1</text> <text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate(150,114)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">T1</text> <text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate(150,140)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">Y2</text> <text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate(150,166)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">V1</text> <text class="pin-func" x="36" y="15">free</text></g>
+    <g class="pin-cell" transform="translate(150,192)"><rect width="130" height="22" rx="2"/><text class="pin-fpga" x="6" y="15">N2</text> <text class="pin-func" x="36" y="15">free</text></g>
+  </g>
+
+  <!-- ========= legend ========= -->
+  <g class="swatch" transform="translate(60,1040)">
+    <g class="pin-cell tdm0">
+      <rect x="0" y="0" width="100" height="22" rx="2"/>
+      <text class="pin-fpga" x="8" y="15">TDM port 0</text>
+    </g>
+    <g class="pin-cell tdm1">
+      <rect x="115" y="0" width="100" height="22" rx="2"/>
+      <text class="pin-fpga" x="123" y="15">TDM port 1</text>
+    </g>
+    <g class="pin-cell midi">
+      <rect x="230" y="0" width="100" height="22" rx="2"/>
+      <text class="pin-fpga" x="238" y="15">MIDI 31250</text>
+    </g>
+    <g class="pin-cell euro">
+      <rect x="345" y="0" width="100" height="22" rx="2"/>
+      <text class="pin-fpga" x="353" y="15">Eurorack</text>
+    </g>
+    <g class="pin-cell pulse">
+      <rect x="460" y="0" width="100" height="22" rx="2"/>
+      <text class="pin-fpga" x="468" y="15">Beat pulses</text>
+    </g>
+    <g class="pin-cell reserved">
+      <rect x="575" y="0" width="100" height="22" rx="2"/>
+      <text class="pin-fpga" x="583" y="15">reserved</text>
+    </g>
+    <g class="pin-cell">
+      <rect x="690" y="0" width="100" height="22" rx="2"/>
+      <text class="pin-fpga" x="698" y="15">free GPIO</text>
+    </g>
+  </g>
+
+  <text class="subtitle" x="60" y="1080">
+    pmodj[0]/[4] = J17/H18 are reserved by the on-board UART console.
+    L2 (pmodc[3]) and K18 (pmodc[7]) are the user LED and cpu_reset pins.
+  </text>
+
+</svg>
