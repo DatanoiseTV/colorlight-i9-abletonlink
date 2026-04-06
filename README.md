@@ -222,12 +222,16 @@ and writes them via the auto-generated `csr.h`.
 
 ## Pinout
 
+![LinkFPGA pinout for the Colorlight i9 v7.2](docs/pinout.svg)
+
 The Colorlight i9 v7.2 exposes its user GPIO via PMOD-style headers
-identified as `pmode`, `pmodf`, `pmodd`, `pmodg`, `pmodh`, `pmodi`,
-`pmodj`, `pmodk`, `pmodl`. We avoid `pmodc` because two of its pins
-overlap with `cpu_reset_n` (K18) and `user_led_n` (L2). This gives us
-**up to 8 physical TDM16 ports** plus a dedicated PMOD for the beat /
-transport pulse outputs.
+identified in `litex_boards.platforms.colorlight_i5` as `pmode`,
+`pmodf`, `pmodd`, `pmodg`, `pmodh`, `pmodi`, `pmodj`, `pmodk`, `pmodl`,
+plus `pmodc` (which is partially reserved for the on-board user LED
+and the `cpu_reset_n` button — its remaining 6 pins host the MIDI
+TX/RX and the Eurorack inputs). The diagram above shows every pin on
+every connector colour-coded by LinkFPGA function for the default
+build (`--num-physical-tdm-ports 2`).
 
 ### TDM16 ports
 
