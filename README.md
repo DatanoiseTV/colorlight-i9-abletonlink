@@ -43,9 +43,9 @@ Ethernet in, audio + clock out.
 
 ```
                     +---------------------------------------------------+
-                    |                Colorlight i9 v7.2                 |
-                    |                LFE5U-45F-6BG381C                  |
-                    |                                                   |
+                    |                Colorlight i9 v7.2                |
+                    |                LFE5U-45F-6BG381C                 |
+                    |                                                  |
    GbE  ─>──────────┤   RGMII  ┌────────────┐    ┌──────────────────┐  |
    PHY0             |          │  LiteEth   │    │  VexRiscv core   │  |
                     |          │   MAC      │←──→│   + lwIP 2.2.0   │  |
